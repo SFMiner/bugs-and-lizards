@@ -143,7 +143,8 @@ func _set_count(n: int) -> void:
 
 func _update_time_label() -> void:
 	var s: int = int(ceilf(_seconds_left))
-	_time_label.text = "Time left: %d:%02d" % [s / 60, s % 60]
+	# Frame rate and bug count shown for the Gate 2 bug-count ladder on Chromebooks.
+	_time_label.text = "Time left: %d:%02d\n%d fps, %d bugs" % [s / 60, s % 60, int(Engine.get_frames_per_second()), _bugs.count() if _bugs != null else 0]
 
 
 func _flash(text: String) -> void:

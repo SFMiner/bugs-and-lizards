@@ -12,6 +12,12 @@ func _ready() -> void:
 		_start_server(args)
 	else:
 		_start_client(args)
+		var shot: String = OS.get_environment("BL_SHOT") # desktop debug: save a screenshot and quit
+		if shot != "" and not OS.has_feature("web"):
+			for i: int in 120:
+				await get_tree().process_frame
+			get_viewport().get_texture().get_image().save_png(shot)
+			get_tree().quit()
 
 
 func _start_server(args: PackedStringArray) -> void:
@@ -27,11 +33,18 @@ func _start_server(args: PackedStringArray) -> void:
 
 
 func _start_client(args: PackedStringArray) -> void:
-	var path: String = "res://scripts/client/campus_check.gd"
-	var script: GDScript = load(path)
-	var node: Node = script.new()
-	node.name = "Client"
-	add_child(node)
+	var query: String = page_query()
+	var flags: PackedStringArray = query.split("&", false)
+	if flags.has("campus") or args.has("--campus"):
+		var script: GDScript = load("res://scripts/client/campus_check.gd")
+		var node: Node = script.new()
+		node.name = "Client"
+		add_child(node)
+		return
+	var app: ClientApp = ClientApp.new()
+	app.name = "Client"
+	app.teacher_mode = flags.has("teacher") or args.has("--teacher")
+	add_child(app)
 
 
 ## Query string of the page on web ("" on desktop), without the leading "?".

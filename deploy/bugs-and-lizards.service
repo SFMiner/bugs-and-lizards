@@ -1,0 +1,25 @@
+# Bugs & Lizards game server. Runs the same .pck the browser loads, headless, on loopback only.
+# nginx proxies wss://<host>/bugs-and-lizards/ws to 127.0.0.1:3311.
+[Unit]
+Description=Bugs & Lizards game server (headless Godot 4.7.2)
+After=network.target
+
+[Service]
+Type=simple
+User=bugsliz
+Group=bugsliz
+WorkingDirectory=/srv/bugs-and-lizards
+Environment=BL_LOG_DIR=/srv/bugs-and-lizards/logs
+ExecStart=/srv/bugs-and-lizards/godot --headless --main-pack /srv/bugs-and-lizards/www/index.pck -- --server --port=3311
+Restart=on-failure
+RestartSec=3
+MemoryMax=512M
+CPUQuota=100%
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/bugs-and-lizards/logs /srv/bugs-and-lizards/.local
+
+[Install]
+WantedBy=multi-user.target

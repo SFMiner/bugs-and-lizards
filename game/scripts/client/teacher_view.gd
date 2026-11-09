@@ -1,0 +1,622 @@
+class_name TeacherView
+extends Control
+## Teacher screen. Setup panel creates a game (CREATE_SESSION). Once a session exists it shows the
+## game code, session-wide hunt controls, settings (CONFIGURE), one card per ecosystem and the roster.
+## Every TEACHER_STATE rebuilds the view from that state alone. Designed for about 1180x640 and scrolls
+## when smaller. Messages arrive through handle(), routed by main.gd. The manager stores the token.
+
+signal session_ready(code: String, token: String)
+
+const COL_BG: Color = Color(0.93, 0.95, 0.9, 1)
+const COL_INK: Color = Color(0.1, 0.12, 0.1, 1)
+const COL_CARD: Color = Color(1, 1, 1, 1)
+const COL_RULE: Color = Color(0.55, 0.6, 0.55, 1)
+const COL_ALERT: Color = Color(0.62, 0.1, 0.08, 1)
+
+var _net: NetClient = null
+var _built: bool = false
+var _code: String = ""
+var _token: String = ""
+var _resuming: bool = false
+var _config_filled: bool = false
+var _stage: int = 1
+var _roster_sig: String = ""
+var _room_cards: Dictionary = {} # int room -> rec Dictionary (see _ensure_room_card)
+var _stage_btns: Array[Button] = []
+var _stage_group: ButtonGroup = null
+var _scroll: ScrollContainer = null
+var _status: Label = null
+var _setup_box: VBoxContainer = null
+var _session_box: VBoxContainer = null
+var _names_edit: TextEdit = null
+var _code_label: Label = null
+var _spin_rooms: SpinBox = null
+var _spin_bugs: SpinBox = null
+var _spin_lizards: SpinBox = null
+var _spin_hunt: SpinBox = null
+var _spin_budget: SpinBox = null
+var _rooms_grid: GridContainer = null
+var _roster_grid: GridContainer = null
+
+
+func _ready() -> void:
+	_ensure_built()
+
+
+func setup(net: NetClient) -> void:
+	_net = net
+	_ensure_built()
+
+
+## Manager calls this with a stored token: reopen the game and wait for TEACHER_STATE.
+func resume(code: String, token: String) -> void:
+	_ensure_built()
+	_code = code
+	_token = token
+	_resuming = true
+	_config_filled = false
+	_roster_sig = ""
+	_show_session(true)
+	_code_label.text = "Game code: %s" % code
+	_set_status("Reconnecting to game %s..." % code)
+	_net_send(Protocol.TEACHER_REJOIN, {Protocol.F_CODE: code, Protocol.F_TOKEN: token})
+
+
+func graph_slot(room: int) -> Control:
+	_ensure_built()
+	var rec: Dictionary = _ensure_room_card(room)
+	return rec["graph"] as Control
+
+
+func handle(msg: Dictionary) -> void:
+	_ensure_built()
+	var t: String = str(msg.get(Protocol.F_TYPE, ""))
+	if t == Protocol.SESSION_CREATED:
+		_on_session_created(msg)
+	elif t == Protocol.TEACHER_STATE:
+		_on_state(msg)
+	elif t == Protocol.ERROR:
+		_on_error(msg)
+
+
+# === BUILD ===
+func _ensure_built() -> void:
+	if _built:
+		return
+	_built = true
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var th: Theme = Theme.new()
+	th.default_font_size = 20
+	theme = th
+
+	var bg: ColorRect = ColorRect.new()
+	bg.color = COL_BG
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(bg)
+
+	_scroll = ScrollContainer.new()
+	_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	add_child(_scroll)
+
+	var margin: MarginContainer = _margin(20)
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(margin)
+
+	var column: VBoxContainer = VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override("separation", 14)
+	margin.add_child(column)
+
+	column.add_child(_text_label("Teacher", 36))
+	_status = _text_label("", 22)
+	_status.add_theme_color_override("font_color", COL_ALERT)
+	column.add_child(_status)
+
+	_setup_box = VBoxContainer.new()
+	_setup_box.add_theme_constant_override("separation", 10)
+	column.add_child(_setup_box)
+	_build_setup(_setup_box)
+
+	_session_box = VBoxContainer.new()
+	_session_box.add_theme_constant_override("separation", 14)
+	_session_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_session_box.visible = false
+	column.add_child(_session_box)
+	_build_session(_session_box)
+
+	_fill_from_config(StageConfig.defaults(1))
+
+
+func _build_setup(box: VBoxContainer) -> void:
+	box.add_child(_text_label("Start a new game", 30))
+	box.add_child(_text_label("Class names, one per line", 22))
+	_names_edit = TextEdit.new()
+	_names_edit.custom_minimum_size = Vector2(0, 260)
+	_names_edit.gui_input.connect(_on_names_input)
+	box.add_child(_names_edit)
+	box.add_child(_button("Create game", Vector2(320, 72), 28, _on_create))
+
+
+func _build_session(box: VBoxContainer) -> void:
+	_code_label = _text_label("", 56)
+	_code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(_code_label)
+
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	box.add_child(row)
+	row.add_child(_button("Start hunt", Vector2(280, 80), 28, _on_start_hunt))
+	row.add_child(_button("Stop hunt", Vector2(280, 80), 28, _on_stop_hunt))
+	row.add_child(_button("Next round", Vector2(280, 80), 28, _on_advance))
+
+	box.add_child(_text_label("Game settings (apply to every ecosystem)", 28))
+	_stage_group = ButtonGroup.new()
+	var stage_row: HBoxContainer = HBoxContainer.new()
+	stage_row.add_theme_constant_override("separation", 10)
+	box.add_child(stage_row)
+	_stage_btns.clear()
+	for s: int in [1, 2, 3, 4]:
+		var b: Button = Button.new()
+		b.text = "%d. %s" % [s, StageConfig.NAMES[s]]
+		b.toggle_mode = true
+		b.button_group = _stage_group
+		b.custom_minimum_size = Vector2(260, 60)
+		b.add_theme_font_size_override("font_size", 22)
+		b.toggled.connect(_on_stage_toggled.bind(s))
+		stage_row.add_child(b)
+		_stage_btns.append(b)
+
+	var grid: GridContainer = GridContainer.new()
+	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 20)
+	grid.add_theme_constant_override("v_separation", 10)
+	box.add_child(grid)
+	_spin_rooms = _spin(1, 8, 1)
+	grid.add_child(_cell_label("Ecosystems (rooms)", 22))
+	grid.add_child(_spin_rooms)
+	_spin_bugs = _spin(0, 600, 5)
+	grid.add_child(_cell_label("Starting bugs per ecosystem", 22))
+	grid.add_child(_spin_bugs)
+	_spin_lizards = _spin(1, 10, 1)
+	grid.add_child(_cell_label("Starting lizards per ecosystem", 22))
+	grid.add_child(_spin_lizards)
+	_spin_hunt = _spin(15, 120, 1)
+	grid.add_child(_cell_label("Hunt length (seconds)", 22))
+	grid.add_child(_spin_hunt)
+	_spin_budget = _spin(50, 2000, 10)
+	grid.add_child(_cell_label("Bug budget", 22))
+	grid.add_child(_spin_budget)
+	box.add_child(_button("Apply settings", Vector2(280, 64), 26, _on_apply))
+
+	box.add_child(_text_label("Ecosystems", 28))
+	_rooms_grid = GridContainer.new()
+	_rooms_grid.columns = 2
+	_rooms_grid.add_theme_constant_override("h_separation", 16)
+	_rooms_grid.add_theme_constant_override("v_separation", 16)
+	_rooms_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_child(_rooms_grid)
+
+	box.add_child(_text_label("Roster", 28))
+	_roster_grid = GridContainer.new()
+	_roster_grid.columns = 5
+	_roster_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_roster_grid.add_theme_constant_override("h_separation", 18)
+	_roster_grid.add_theme_constant_override("v_separation", 6)
+	box.add_child(_roster_grid)
+
+
+func _text_label(text: String, px: int) -> Label:
+	var l: Label = Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.add_theme_font_size_override("font_size", px)
+	l.add_theme_color_override("font_color", COL_INK)
+	return l
+
+
+func _cell_label(text: String, px: int) -> Label:
+	var l: Label = _text_label(text, px)
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return l
+
+
+func _button(text: String, min_size: Vector2, px: int, cb: Callable) -> Button:
+	var b: Button = Button.new()
+	b.text = text
+	b.custom_minimum_size = min_size
+	b.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	b.add_theme_font_size_override("font_size", px)
+	b.pressed.connect(cb)
+	return b
+
+
+func _spin(lo: float, hi: float, step: float) -> SpinBox:
+	var s: SpinBox = SpinBox.new()
+	s.min_value = lo
+	s.max_value = hi
+	s.step = step
+	s.custom_minimum_size = Vector2(200, 52)
+	return s
+
+
+func _margin(px: int) -> MarginContainer:
+	var m: MarginContainer = MarginContainer.new()
+	for side: String in ["left", "top", "right", "bottom"]:
+		m.add_theme_constant_override("margin_" + side, px)
+	return m
+
+
+func _card_style() -> StyleBoxFlat:
+	var sb: StyleBoxFlat = StyleBoxFlat.new()
+	sb.bg_color = COL_CARD
+	sb.border_color = COL_RULE
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(6)
+	sb.set_content_margin_all(12)
+	return sb
+
+
+func _clear(box: Node) -> void:
+	for c: Node in box.get_children():
+		box.remove_child(c)
+		c.queue_free()
+
+
+func _as_array(v: Variant) -> Array:
+	return v if typeof(v) == TYPE_ARRAY else []
+
+
+func _as_dict(v: Variant) -> Dictionary:
+	return v if typeof(v) == TYPE_DICTIONARY else {}
+
+
+func _join_names(names: Array) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for n: Variant in names:
+		parts.append(str(n))
+	return ", ".join(parts)
+
+
+# === SENDING ===
+func _net_send(type: String, fields: Dictionary) -> void:
+	if _net != null:
+		_net.send(type, fields)
+
+
+func _send_cmd(type: String, fields: Dictionary = {}) -> void:
+	if _token == "":
+		_set_status("Create or reopen a game first.")
+		return
+	var body: Dictionary = fields.duplicate()
+	body[Protocol.F_TOKEN] = _token
+	_net_send(type, body)
+
+
+func _set_status(text: String) -> void:
+	_status.text = text
+
+
+func _show_session(on: bool) -> void:
+	_session_box.visible = on
+	_setup_box.visible = not on
+
+
+# === SETUP ===
+func _on_names_input(event: InputEvent) -> void:
+	# A TextEdit takes Tab for indentation, so a keyboard user could never leave it.
+	# Tab moves focus instead (Shift+Tab backwards).
+	if not (event is InputEventKey):
+		return
+	var key: InputEventKey = event as InputEventKey
+	if not key.pressed or key.echo or key.keycode != KEY_TAB:
+		return
+	var target: Control = _names_edit.find_prev_valid_focus() if key.shift_pressed else _names_edit.find_next_valid_focus()
+	if target != null:
+		target.grab_focus()
+		get_viewport().set_input_as_handled()
+
+
+func _on_create() -> void:
+	var names: Array = []
+	for line: String in _names_edit.text.split("\n"):
+		var nm: String = line.strip_edges()
+		if nm != "":
+			names.append(nm)
+	if names.is_empty():
+		_set_status("Type at least one name, one per line.")
+		return
+	_set_status("Creating the game...")
+	_net_send(Protocol.CREATE_SESSION, {Protocol.F_NAMES: names})
+
+
+func _on_session_created(msg: Dictionary) -> void:
+	_code = str(msg.get(Protocol.F_CODE, ""))
+	_token = str(msg.get(Protocol.F_TOKEN, ""))
+	_resuming = false
+	_config_filled = false
+	_roster_sig = ""
+	_show_session(true)
+	_code_label.text = "Game code: %s" % _code
+	_set_status("Game created. Students type this code on their screens.")
+	session_ready.emit(_code, _token)
+
+
+# === SESSION COMMANDS ===
+func _on_start_hunt() -> void:
+	_send_cmd(Protocol.START_HUNT)
+
+
+func _on_stop_hunt() -> void:
+	_send_cmd(Protocol.STOP_HUNT)
+
+
+func _on_advance() -> void:
+	_send_cmd(Protocol.ADVANCE)
+
+
+func _on_apply() -> void:
+	var cfg: Dictionary = {
+		"stage": _stage,
+		"rooms": int(_spin_rooms.value),
+		"bugs_start": int(_spin_bugs.value),
+		"lizards_start": int(_spin_lizards.value),
+		"hunt_seconds": int(_spin_hunt.value),
+		"bug_budget": int(_spin_budget.value),
+	}
+	_send_cmd(Protocol.CONFIGURE, {Protocol.F_CONFIG: cfg, Protocol.F_ASSIGN: {}})
+	_set_status("Settings sent.")
+
+
+func _on_stage_toggled(on: bool, s: int) -> void:
+	if not on:
+		return
+	_fill_from_config(StageConfig.defaults(s))
+
+
+func _fill_from_config(cfg: Dictionary) -> void:
+	_spin_rooms.value = float(cfg.get("rooms", 1))
+	_spin_bugs.value = float(cfg.get("bugs_start", 0))
+	_spin_lizards.value = float(cfg.get("lizards_start", 1))
+	_spin_hunt.value = float(cfg.get("hunt_seconds", StageConfig.HUNT_SECONDS_DEFAULT))
+	_spin_budget.value = float(cfg.get("bug_budget", StageConfig.BUG_BUDGET_DEFAULT))
+	_set_stage_pressed(clampi(int(cfg.get("stage", 1)), 1, 4))
+
+
+func _set_stage_pressed(s: int) -> void:
+	_stage = s
+	for i: int in range(_stage_btns.size()):
+		_stage_btns[i].set_pressed_no_signal(i == s - 1)
+
+
+# === TEACHER_STATE ===
+func _on_state(msg: Dictionary) -> void:
+	var st: Dictionary = _as_dict(msg.get(Protocol.F_STATE, {}))
+	if st.is_empty():
+		return
+	_resuming = false
+	_code = str(msg.get(Protocol.F_CODE, st.get("code", _code)))
+	_show_session(true)
+	_code_label.text = "Game code: %s" % _code
+	if not _config_filled:
+		var cfg: Dictionary = _as_dict(st.get("config", {}))
+		if not cfg.is_empty():
+			_fill_from_config(cfg)
+			_config_filled = true
+	_set_status("")
+
+	var seen: Dictionary = {}
+	for raw: Variant in _as_array(st.get("rooms", [])):
+		if typeof(raw) != TYPE_DICTIONARY:
+			continue
+		var room: Dictionary = raw
+		var idx: int = int(room.get("room", 0))
+		seen[idx] = true
+		_update_room(idx, room)
+	_prune_rooms(seen)
+	_update_roster(_as_array(st.get("roster", [])))
+
+
+func _on_error(msg: Dictionary) -> void:
+	var reason: String = str(msg.get(Protocol.F_REASON, ""))
+	if _resuming:
+		_resuming = false
+		_code = ""
+		_token = ""
+		_show_session(false)
+		_set_status("That saved game could not be reopened (%s). Create a new game, or check the code." % reason)
+		return
+	_set_status("Something went wrong (%s)." % reason)
+
+
+# === ROOM CARDS ===
+## A card is built once per room and kept. Its "inner" box is rebuilt only when the structure changes
+## (phase, round, stage, paused, hunters, members); its counts and seconds labels update in place on
+## every state. The "graph" box is never rebuilt, so the graph can be added later.
+func _ensure_room_card(idx: int) -> Dictionary:
+	if _room_cards.has(idx):
+		return _room_cards[idx]
+	var card: PanelContainer = PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _card_style())
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rooms_grid.add_child(card)
+	var column: VBoxContainer = VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
+	card.add_child(column)
+	var inner: VBoxContainer = VBoxContainer.new()
+	inner.add_theme_constant_override("separation", 8)
+	column.add_child(inner)
+	var graph: VBoxContainer = VBoxContainer.new()
+	graph.name = "GraphSlot%d" % idx
+	column.add_child(graph)
+	var rec: Dictionary = {
+		"card": card, "inner": inner, "graph": graph, "sig": "",
+		"counts": null, "seconds": null, "reminder": null, "picks": {},
+	}
+	_room_cards[idx] = rec
+	return rec
+
+
+func _room_structure(room: Dictionary) -> Dictionary:
+	return {
+		"phase": str(room.get("phase", "")),
+		"round": int(room.get("round", 0)),
+		"stage": int(room.get("stage", _stage)),
+		"paused": bool(room.get("paused", false)),
+		"hunters": _as_array(room.get("hunters", [])),
+		"members": _as_array(room.get("members", [])),
+	}
+
+
+func _update_room(idx: int, room: Dictionary) -> void:
+	var rec: Dictionary = _ensure_room_card(idx)
+	var sig: String = JSON.stringify(_room_structure(room))
+	if sig != str(rec["sig"]):
+		rec["sig"] = sig
+		_rebuild_room_inner(idx, room, rec)
+	_update_room_dynamic(room, rec)
+
+
+func _rebuild_room_inner(idx: int, room: Dictionary, rec: Dictionary) -> void:
+	var inner: VBoxContainer = rec["inner"] as VBoxContainer
+	_clear(inner)
+	var picks: Dictionary = {}
+	rec["picks"] = picks
+	var phase: String = str(room.get("phase", ""))
+	var round_n: int = int(room.get("round", 0))
+	var stage: int = clampi(int(room.get("stage", _stage)), 1, 4)
+	var paused: bool = bool(room.get("paused", false))
+	var hunters: Array = _as_array(room.get("hunters", []))
+	var members: Array = _as_array(room.get("members", []))
+
+	inner.add_child(_text_label("Ecosystem %d" % (idx + 1), 30))
+	inner.add_child(_text_label("Stage %d: %s" % [stage, StageConfig.NAMES[stage]], 22))
+	var phase_line: String = "%s. Round %d" % [_phase_text(phase), round_n]
+	if paused:
+		phase_line += " (PAUSED)"
+	inner.add_child(_text_label(phase_line, 24))
+
+	var counts: Label = _text_label("", 24)
+	inner.add_child(counts)
+	var seconds: Label = _text_label("", 22)
+	inner.add_child(seconds)
+	var reminder: Label = _text_label("Prediction stop: students write their prediction now.", 24)
+	reminder.add_theme_color_override("font_color", COL_ALERT)
+	inner.add_child(reminder)
+	rec["counts"] = counts
+	rec["seconds"] = seconds
+	rec["reminder"] = reminder
+
+	inner.add_child(_text_label("Hunting: %s" % ("nobody" if hunters.is_empty() else _join_names(hunters)), 22))
+	inner.add_child(_text_label("Members (%d): %s" % [members.size(), "none" if members.is_empty() else _join_names(members)], 22))
+
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	inner.add_child(row)
+	row.add_child(_button("Resume" if paused else "Pause", Vector2(180, 60), 24, _on_pause_room.bind(idx, not paused)))
+	row.add_child(_button("Reset", Vector2(180, 60), 24, _on_reset_room.bind(idx)))
+
+	if phase == Protocol.PH_SETUP and round_n <= 1:
+		inner.add_child(_text_label("Round 1 starting lizards: tick the students who start as lizards.", 22))
+		for m: Variant in members:
+			var nm: String = str(m)
+			var cb: CheckBox = CheckBox.new()
+			cb.text = nm
+			cb.button_pressed = nm in hunters
+			inner.add_child(cb)
+			picks[nm] = cb
+		inner.add_child(_button("Set lizards", Vector2(240, 60), 24, _on_set_lizards.bind(idx)))
+
+
+func _phase_text(phase: String) -> String:
+	if phase == Protocol.PH_SETUP:
+		return "Setup, waiting for the hunt"
+	if phase == Protocol.PH_HUNT:
+		return "Hunt in progress"
+	if phase == Protocol.PH_STUDY:
+		return "Round results, waiting for Next round"
+	if phase == Protocol.PH_ENDED:
+		return "Ended"
+	return phase
+
+
+func _update_room_dynamic(room: Dictionary, rec: Dictionary) -> void:
+	var counts: Label = rec["counts"] as Label
+	var seconds: Label = rec["seconds"] as Label
+	var reminder: Label = rec["reminder"] as Label
+	if counts == null or seconds == null or reminder == null:
+		return
+	var phase: String = str(room.get("phase", ""))
+	counts.text = "Caught: %d    Remaining: %d" % [int(room.get("caught", 0)), int(room.get("remaining", 0))]
+	seconds.text = ("Seconds left: %d" % int(room.get("seconds_left", 0))) if phase == Protocol.PH_HUNT else ""
+
+	var show_reminder: bool = false
+	var hist: Array = _as_array(room.get("history", []))
+	if not hist.is_empty():
+		var last: Dictionary = _as_dict(hist[hist.size() - 1])
+		var stage: int = clampi(int(room.get("stage", _stage)), 1, 4)
+		show_reminder = int(last.get("round", -1)) == StageConfig.PREDICTION_AFTER_ROUND[stage]
+	reminder.visible = show_reminder
+
+
+func _prune_rooms(seen: Dictionary) -> void:
+	for key: Variant in _room_cards.keys():
+		if seen.has(key):
+			continue
+		var rec: Dictionary = _room_cards[key]
+		var card: Control = rec["card"] as Control
+		_rooms_grid.remove_child(card)
+		card.queue_free()
+		_room_cards.erase(key)
+
+
+func _on_pause_room(idx: int, value: bool) -> void:
+	_send_cmd(Protocol.PAUSE_ROOM, {Protocol.F_ROOM: idx, Protocol.F_VALUE: value})
+
+
+func _on_reset_room(idx: int) -> void:
+	_send_cmd(Protocol.RESET_ROOM, {Protocol.F_ROOM: idx})
+
+
+func _on_set_lizards(idx: int) -> void:
+	var rec: Dictionary = _room_cards.get(idx, {})
+	var picks: Dictionary = _as_dict(rec.get("picks", {}))
+	var chosen: Array = []
+	for nm: Variant in picks.keys():
+		var cb: CheckBox = picks[nm] as CheckBox
+		if cb != null and cb.button_pressed:
+			chosen.append(str(nm))
+	_send_cmd(Protocol.SET_LIZARDS, {Protocol.F_ROOM: idx, Protocol.F_LIZARDS: chosen})
+	_set_status("Lizards sent for Ecosystem %d." % (idx + 1))
+
+
+# === ROSTER ===
+func _update_roster(roster: Array) -> void:
+	var sig: String = JSON.stringify(roster)
+	if sig == _roster_sig:
+		return
+	_roster_sig = sig
+	_clear(_roster_grid)
+	for h: String in ["Name", "Ecosystem", "Seat", "Connection", ""]:
+		_roster_grid.add_child(_cell_label(h, 22))
+	for raw: Variant in roster:
+		if typeof(raw) != TYPE_DICTIONARY:
+			continue
+		var e: Dictionary = raw
+		var nm: String = str(e.get("name", ""))
+		var taken: bool = bool(e.get("taken", false))
+		var connected: bool = bool(e.get("connected", false))
+		_roster_grid.add_child(_cell_label(nm, 22))
+		_roster_grid.add_child(_cell_label("Ecosystem %d" % (int(e.get("room", 0)) + 1), 22))
+		_roster_grid.add_child(_cell_label("taken" if taken else "free", 22))
+		_roster_grid.add_child(_cell_label("connected" if connected else "not connected", 22))
+		if taken:
+			_roster_grid.add_child(_button("Release", Vector2(160, 52), 22, _on_release.bind(nm)))
+		else:
+			_roster_grid.add_child(_cell_label("", 22))
+
+
+func _on_release(nm: String) -> void:
+	_send_cmd(Protocol.RELEASE_SEAT, {Protocol.F_NAME: nm})

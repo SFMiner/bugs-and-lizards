@@ -81,6 +81,7 @@ func _on_teacher_session(code: String, token: String) -> void:
 
 
 func _on_joined(student_name: String, token: String, room: int, code: String) -> void:
+	print("client: joined room %d" % room)
 	_seat = {"code": code, "token": token, "name": student_name, "room": room}
 	_save(KEY_SEAT, _seat)
 	_show_summary()
@@ -101,6 +102,7 @@ func _on_message(msg: Dictionary) -> void:
 			else:
 				_on_joined(str(msg.get(Protocol.F_NAME, "")), str(msg.get(Protocol.F_TOKEN, "")), int(msg.get(Protocol.F_ROOM, 0)), code)
 		Protocol.HUNT_START:
+			print("client: hunt_start round %d bugs %d" % [int(msg.get(Protocol.F_ROUND, 0)), (msg.get(Protocol.F_BUGS, []) as Array).size()])
 			_hunting = true
 			_join.visible = false
 			_summary.visible = false
@@ -115,6 +117,9 @@ func _on_message(msg: Dictionary) -> void:
 			_end_hunt_view()
 			_summary.handle(msg)
 		Protocol.SUMMARY, Protocol.ROOM_STATE:
+			if t == Protocol.SUMMARY:
+				var sm: Dictionary = msg.get(Protocol.F_SUMMARY, {})
+				print("client: summary round %d BUGS %d next %d LIZARDS %d" % [int(sm.get("round", 0)), int(sm.get("BUGS", 0)), int(sm.get("bugs_next_start", 0)), int(sm.get("LIZARDS", 0))])
 			if msg.has(Protocol.F_ROOM):
 				_seat["room"] = int(msg[Protocol.F_ROOM])
 			_summary.handle(msg)

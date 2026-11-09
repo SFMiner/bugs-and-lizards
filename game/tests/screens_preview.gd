@@ -50,6 +50,12 @@ func _run() -> void:
 	await _frames(3)
 	await _snap("summary_ended")
 	_check(summary.graph_slot() != null and summary.graph_slot().name == "GraphSlot", "summary graph slot")
+	_check(summary.graph_slot().get_child_count() == 1, "summary graph added once")
+	var summary_scrolls: Array = summary.find_children("*", "ScrollContainer", true, false)
+	if not summary_scrolls.is_empty():
+		(summary_scrolls[0] as ScrollContainer).scroll_vertical = 100000
+	await _frames(3)
+	await _snap("summary_graph")
 	await _discard(summary)
 
 	# 3. Teacher: setup panel, then a live session with two rooms and a 25-name roster.
@@ -72,6 +78,11 @@ func _run() -> void:
 		sc_mid.scroll_vertical = 760
 	await _frames(3)
 	await _snap("teacher_session_rooms")
+	if not scrolls.is_empty():
+		var sc_graph: ScrollContainer = scrolls[0] as ScrollContainer
+		sc_graph.scroll_vertical = 1000
+	await _frames(3)
+	await _snap("teacher_session_graphs")
 	_check(teacher.graph_slot(0) != null and teacher.graph_slot(1) != null, "teacher graph slots")
 	await _discard(teacher)
 
@@ -130,17 +141,13 @@ func _room_state_msg(phase: String, round_n: int, secs: float) -> Dictionary:
 
 
 func _summary_msg(ended: bool, reason: String) -> Dictionary:
-	var history: Array = [
-		{"round": 1, "stage": 2, "bugs_start": 75, "BUGS": 21, "bugs_next_start": 63, "LIZARDS": 3, "MUTANTS": 0, "end_reason": ""},
-		{"round": 2, "stage": 2, "bugs_start": 63, "BUGS": 15, "bugs_next_start": 45, "LIZARDS": 4, "MUTANTS": 0, "end_reason": ""},
-		{"round": 3, "stage": 2, "bugs_start": 45, "BUGS": 12, "bugs_next_start": 36, "LIZARDS": 4, "MUTANTS": 0, "end_reason": reason},
-	]
+	var history: Array = _stage2_history(reason)
 	return {
 		Protocol.F_TYPE: Protocol.SUMMARY,
 		Protocol.F_ROOM: 0,
 		Protocol.F_SUMMARY: {
-			"round": 3, "stage": 2, "bugs_start": 45, "BUGS": 12, "bugs_next_start": 36,
-			"LIZARDS": 4, "MUTANTS": 0, "starved": ["Dev"], "survived": ["Ada", "Ben", "Cleo"],
+			"round": 4, "stage": 2, "bugs_start": 912, "BUGS": 620, "bugs_next_start": 1860,
+			"LIZARDS": 2, "MUTANTS": 0, "starved": ["Dev"], "survived": ["Ada", "Ben", "Cleo"],
 			"captures": {"Ada": 7, "Ben": 6, "Cleo": 9, "Dev": 2}, "hunt_seconds": 45,
 			"ended": ended, "end_reason": reason, "history": history,
 		},
@@ -156,14 +163,11 @@ func _teacher_state() -> Dictionary:
 		})
 	var cfg: Dictionary = StageConfig.defaults(2)
 	cfg["rooms"] = 2
-	var hist: Array = [
-		{"round": 1, "stage": 2, "bugs_start": 75, "BUGS": 21, "bugs_next_start": 63, "LIZARDS": 3, "MUTANTS": 0, "end_reason": ""},
-		{"round": 2, "stage": 2, "bugs_start": 63, "BUGS": 15, "bugs_next_start": 45, "LIZARDS": 4, "MUTANTS": 0, "end_reason": ""},
-	]
+	var hist: Array = _stage2_history("")
 	var rooms: Array = [
 		{
-			"room": 0, "phase": "hunt", "round": 2, "stage": 2, "paused": false, "bugs_start": 63,
-			"caught": 31, "remaining": 32, "seconds_left": 17.4,
+			"room": 0, "phase": "study", "round": 4, "stage": 2, "paused": false, "bugs_start": 912,
+			"caught": 292, "remaining": 620, "seconds_left": 0.0,
 			"hunters": ["Ada", "Ben", "Cleo"], "members": NAMES_25.slice(0, 13), "history": hist,
 		},
 		{
@@ -173,3 +177,14 @@ func _teacher_state() -> Dictionary:
 		},
 	]
 	return {"code": "4821", "config": cfg, "roster": roster, "rooms": rooms}
+
+
+## Four Stage 2 rounds: next start = BUGS x 3, so the last round's next start (1860) overruns the habitat.
+## BUGS values run past 999 on purpose, to check the graph plots them without capping.
+func _stage2_history(last_reason: String) -> Array:
+	return [
+		{"round": 1, "stage": 2, "bugs_start": 75, "BUGS": 48, "bugs_next_start": 144, "LIZARDS": 3, "MUTANTS": 0, "end_reason": ""},
+		{"round": 2, "stage": 2, "bugs_start": 144, "BUGS": 114, "bugs_next_start": 342, "LIZARDS": 3, "MUTANTS": 0, "end_reason": ""},
+		{"round": 3, "stage": 2, "bugs_start": 342, "BUGS": 304, "bugs_next_start": 912, "LIZARDS": 2, "MUTANTS": 0, "end_reason": ""},
+		{"round": 4, "stage": 2, "bugs_start": 912, "BUGS": 620, "bugs_next_start": 1860, "LIZARDS": 2, "MUTANTS": 0, "end_reason": last_reason},
+	]

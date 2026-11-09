@@ -196,6 +196,7 @@ func _on_configure(msg: Dictionary) -> void:
 
 func _apply_config(provided: Dictionary, prov_assign: Dictionary) -> void:
 	var cfg: Dictionary = config.duplicate()
+	var old_rooms: int = int(config.get("rooms", 1))
 	if provided.has("stage") and _is_num(provided["stage"]):
 		var d: Dictionary = StageConfig.defaults(int(provided["stage"]))
 		d["rooms"] = cfg.get("rooms", 1)
@@ -216,7 +217,8 @@ func _apply_config(provided: Dictionary, prov_assign: Dictionary) -> void:
 	var new_assign: Dictionary = {}
 	var rr: int = 0
 	for name: String in roster:
-		var v: Variant = prov_assign.get(name, assign.get(name))
+		# A changed room count re-deals everyone not named in prov_assign round-robin (the teacher view sends no assign).
+		var v: Variant = prov_assign.get(name, assign.get(name) if n == old_rooms else null)
 		if _is_num(v) and int(v) >= 0 and int(v) < n:
 			new_assign[name] = int(v)
 		else:

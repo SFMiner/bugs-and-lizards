@@ -19,6 +19,8 @@ var _role: Label = null
 var _summary_box: VBoxContainer = null
 var _history_grid: GridContainer = null
 var _graph_slot: VBoxContainer = null
+var _graph: PopulationGraph = null
+var _start_lizards: int = -1 # remembered from the round-1 SUMMARY; -1 = not seen yet
 
 
 func _ready() -> void:
@@ -204,7 +206,29 @@ func _on_summary(msg: Dictionary) -> void:
 	if bool(s.get("ended", false)):
 		_summary_box.add_child(_text_label(_end_text(str(s.get("end_reason", "")), int(s.get("bugs_next_start", 0))), 26))
 
-	_fill_history(_as_array(s.get("history", [])), stage == 4)
+	var history: Array = _as_array(s.get("history", []))
+	_fill_history(history, stage == 4)
+	_update_graph(s, history, stage)
+
+
+## Starting lizards: the round-1 SUMMARY's survived + starved (every starter hunts in round 1). Later
+## summaries reuse that; if this student never saw round 1, the first record's LIZARDS stands in.
+func _update_graph(s: Dictionary, history: Array, stage: int) -> void:
+	if int(s.get("round", 0)) == 1 and history.size() == 1:
+		_start_lizards = _as_array(s.get("survived", [])).size() + _as_array(s.get("starved", [])).size()
+	var start_lizards: int = _start_lizards
+	var start_bugs: int = int(s.get("bugs_start", 0))
+	if not history.is_empty():
+		var first: Dictionary = _as_dict(history[0])
+		start_bugs = int(first.get("bugs_start", start_bugs))
+		if start_lizards < 0:
+			start_lizards = int(first.get("LIZARDS", 0))
+	if start_lizards < 0:
+		start_lizards = 0
+	if _graph == null:
+		_graph = PopulationGraph.new()
+		_graph_slot.add_child(_graph)
+	_graph.set_history(history, stage, start_bugs, start_lizards)
 
 
 func _end_text(reason: String, bugs_next: int) -> String:

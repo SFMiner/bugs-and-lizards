@@ -225,6 +225,20 @@ func _drive(cfg: Dictionary, assign: Dictionary) -> void:
 		for r: int in range(rooms):
 			if not room_done[r]:
 				all_ended = false
+		if all_ended and deadline > 0 and Time.get_ticks_msec() < deadline:
+			# Pressure test: keep hunting until the deadline by resetting every room to round 1.
+			for r: int in range(rooms):
+				_cmd(Protocol.RESET_ROOM, {Protocol.F_ROOM: r})
+				_cmd(Protocol.SET_LIZARDS, {Protocol.F_ROOM: r, Protocol.F_LIZARDS: room_lizards[r]})
+				per_room_lizards[r] = RoundRules.starting_lizards(room_lizards[r])
+				room_bugs[r] = int(cfg["bugs_start"])
+				room_done[r] = false
+			for b: BotClient in bots:
+				b.summaries.clear()
+			round_no = 0
+			print("bots: all rooms ended; reset for another run")
+			await _wait(func() -> bool: return false, 1.0)
+			continue
 		if all_ended:
 			break
 		if round_no >= rounds and deadline == 0:

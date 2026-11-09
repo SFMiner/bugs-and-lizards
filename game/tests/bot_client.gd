@@ -127,7 +127,10 @@ func _on_connected() -> void:
 func _on_msg(msg: Dictionary) -> void:
 	if bool(opts.get("record", false)):
 		log.append(msg)
-	match str(msg[Protocol.F_TYPE]):
+	var mt: String = str(msg[Protocol.F_TYPE])
+	if (mt == Protocol.ROOM_STATE or mt == Protocol.SUMMARY or mt == Protocol.HUNT_START) and msg.has(Protocol.F_ROOM):
+		room = int(msg[Protocol.F_ROOM]) # the teacher may move us after we join (CONFIGURE with more rooms)
+	match mt:
 		Protocol.ROSTER:
 			net.send(Protocol.PICK_NAME, {Protocol.F_CODE: code, Protocol.F_NAME: player_name})
 		Protocol.JOINED:

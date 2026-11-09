@@ -20,6 +20,7 @@ var _token: String = ""
 var _resuming: bool = false
 var _config_filled: bool = false
 var _stage: int = 1
+var _lizards_start: int = 1 # config.lizards_start from the latest TEACHER_STATE; feeds the room graphs
 var _roster_sig: String = ""
 var _room_cards: Dictionary = {} # int room -> rec Dictionary (see _ensure_room_card)
 var _stage_btns: Array[Button] = []
@@ -406,6 +407,9 @@ func _on_state(msg: Dictionary) -> void:
 			_fill_from_config(cfg)
 			_config_filled = true
 	_set_status("")
+	var cfg_now: Dictionary = _as_dict(st.get("config", {}))
+	if not cfg_now.is_empty():
+		_lizards_start = int(cfg_now.get("lizards_start", _lizards_start))
 
 	var seen: Dictionary = {}
 	for raw: Variant in _as_array(st.get("rooms", [])):
@@ -477,6 +481,22 @@ func _update_room(idx: int, room: Dictionary) -> void:
 		rec["sig"] = sig
 		_rebuild_room_inner(idx, room, rec)
 	_update_room_dynamic(room, rec)
+	_update_graph(room, rec)
+
+
+## One PopulationGraph per room, added once into the card's graph box and updated from the room's history.
+func _update_graph(room: Dictionary, rec: Dictionary) -> void:
+	var plot: PopulationGraph = rec.get("plot", null) as PopulationGraph
+	if plot == null:
+		plot = PopulationGraph.new()
+		(rec["graph"] as Control).add_child(plot)
+		rec["plot"] = plot
+	var hist: Array = _as_array(room.get("history", []))
+	var start_bugs: int = int(room.get("bugs_start", 0))
+	if not hist.is_empty():
+		start_bugs = int(_as_dict(hist[0]).get("bugs_start", start_bugs))
+	var stage: int = clampi(int(room.get("stage", _stage)), 1, 4)
+	plot.set_history(hist, stage, start_bugs, _lizards_start)
 
 
 func _rebuild_room_inner(idx: int, room: Dictionary, rec: Dictionary) -> void:

@@ -14,7 +14,7 @@ Design: `Bugs-and-Lizards-GDD-v0.3.md` (frozen). Build plan: `IMPLEMENTATION-PLA
 
 - [x] **M0** Headless editor scan clean; web export loads in Chrome and prints the boot line.
 - [ ] **M1** Page loads from the VPS in desktop Chrome, moves, and shows a live round-trip time. (Then stop point 1.)
-- [ ] **M2** `tests/rules_test.gd` runs headless with 100+ cases, zero failures, pass count equals expected total.
+- [x] **M2** `tests/rules_test.gd` runs headless with 100+ cases, zero failures, pass count equals expected total. (308/308)
 - [ ] **M3** One machine: teacher tab + two student tabs play four rounds of Stage 1 and Stage 2; summary matches `round_rules.gd`; two bots racing for one bug give exactly one capture in 20 tries; blind sweeping does no better than looking.
 - [ ] **M4** Two rooms run Stage 2 to an endpoint with bots + one human tab; resetting one room leaves the other untouched; a refreshed student tab rejoins with captures intact; 25 bots hunt ten minutes without the server falling over. (Then stop point 2.)
 

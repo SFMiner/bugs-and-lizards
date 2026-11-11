@@ -9,7 +9,9 @@ Read `IMPLEMENTATION-PLAN.md` §0 first. `Bugs-and-Lizards-GDD-v0.3.md` is froze
 - GDD silent → simplest option, one line under README "Deviations", keep going. Ask the owner only if a lesson rule
   (round arithmetic, tag-in, the mutant) would change.
 - One manager review per milestone; fix only blockers (crash, wrong number, uncompletable round, VPS risk). Rest → "Later".
-- Two failures → simplify; third → cut or ask. No refactor without a failing test. Primitives and flat colours only.
+- Two failures → simplify; third → cut or ask. No refactor without a failing test.
+- Art: free (CC0) models allowed for plants and scenery (owner, 2026-11-11). Bugs stay code-built and ONE flat colour
+  matching a floor colour (the camouflage is the lesson). Floor colours stay the four `HabitatLayout.COLOURS`.
 
 ## Fixed decisions
 - Godot **4.7.2** (`Gamedev\Godot_v4.7.2-stable_win64_console.exe`), Compatibility renderer, single-threaded web export,

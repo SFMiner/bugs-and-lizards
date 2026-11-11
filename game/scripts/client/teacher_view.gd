@@ -23,6 +23,7 @@ var _stage: int = 1
 var _lizards_start: int = 1 # config.lizards_start from the latest TEACHER_STATE; feeds the room graphs
 var _roster_sig: String = ""
 var _room_cards: Dictionary = {} # int room -> rec Dictionary (see _ensure_room_card)
+var _last_rooms: Array = [] # rooms from the latest TEACHER_STATE, to redraw the cards when the stage picker changes
 var _stage_btns: Array[Button] = []
 var _stage_group: ButtonGroup = null
 var _scroll: ScrollContainer = null
@@ -413,6 +414,9 @@ func _on_stage_toggled(on: bool, s: int) -> void:
 	if not on:
 		return
 	_fill_from_config(StageConfig.defaults(s))
+	for raw: Variant in _last_rooms:
+		if typeof(raw) == TYPE_DICTIONARY:
+			_update_room(int((raw as Dictionary).get("room", 0)), raw)
 
 
 func _fill_from_config(cfg: Dictionary) -> void:
@@ -450,7 +454,8 @@ func _on_state(msg: Dictionary) -> void:
 		_lizards_start = int(cfg_now.get("lizards_start", _lizards_start))
 
 	var seen: Dictionary = {}
-	for raw: Variant in _as_array(st.get("rooms", [])):
+	_last_rooms = _as_array(st.get("rooms", []))
+	for raw: Variant in _last_rooms:
 		if typeof(raw) != TYPE_DICTIONARY:
 			continue
 		var room: Dictionary = raw
@@ -506,6 +511,7 @@ func _room_structure(room: Dictionary) -> Dictionary:
 		"phase": str(room.get("phase", "")),
 		"round": int(room.get("round", 0)),
 		"stage": int(room.get("stage", _stage)),
+		"picked_stage": _stage,
 		"paused": bool(room.get("paused", false)),
 		"hunters": _as_array(room.get("hunters", [])),
 		"members": _as_array(room.get("members", [])),
@@ -551,6 +557,13 @@ func _rebuild_room_inner(idx: int, room: Dictionary, rec: Dictionary) -> void:
 
 	inner.add_child(_text_label("Ecosystem %d" % (idx + 1), 30))
 	inner.add_child(_text_label("Stage %d: %s" % [stage, StageConfig.NAMES[stage]], 22))
+	if stage != _stage:
+		# Settings reach only ecosystems still waiting to start round 1; the rest keep their stage until Reset.
+		var fresh: bool = phase == Protocol.PH_SETUP and round_n == 1
+		var how: String = "press Apply settings." if fresh else "press Apply settings, then Reset (it starts again from round 1)."
+		var note: Label = _text_label("The settings panel has Stage %d picked. To play it here, %s" % [_stage, how], 22)
+		note.add_theme_color_override("font_color", COL_ALERT)
+		inner.add_child(note)
 	var phase_line: String = "%s. Round %d" % [_phase_text(phase), round_n]
 	if paused:
 		phase_line += " (PAUSED)"

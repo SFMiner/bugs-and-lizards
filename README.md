@@ -34,6 +34,7 @@ Design: `Bugs-and-Lizards-GDD-v0.3.md` (frozen). Build plan: `IMPLEMENTATION-PLA
 - No miss delay after a capture press that hits nothing: the sweep test showed it is not needed.
 - Teacher New game returns to the setup panel with the old names filled in; the old game keeps running until it expires, and Back to game reopens it.
 - When all 8 game slots are used, creating a game drops the game that has had nobody connected for longest (games with anyone connected are kept).
+- Apply settings changes only ecosystems still waiting to start round 1; a played one keeps its stage until Reset, and its card says so in red while the picked stage differs.
 - Students can leave their game from the waiting screen ("Wrong game or name?"); the seat stays taken until the teacher releases it.
 
 ## Later
@@ -42,6 +43,10 @@ Design: `Bugs-and-Lizards-GDD-v0.3.md` (frozen). Build plan: `IMPLEMENTATION-PLA
 - Keys once died in old browser tabs (letters never reached the page; cause not found); fresh tabs with Ctrl+Shift+R work in Chrome and Vivaldi. Hunt HUD shows a temporary key/focus readout; a window-level key listener feeds the movement keys when they miss the canvas. Remove the readout once settled.
 - Keyboard-only play, digit keys on the join pad and Tab order not yet tried by a human.
 - Bots out-catch humans by far; the §4 calibration target needs real players.
-- Bugs are 14 cm across and look like specks at a few metres; tune with the calibration test.
+- Bugs are the beetle and spider models in `game/assets/models/` (picked per bug from its id, recoloured in code to one flat floor colour, random facing, longest side 16 cm); the code-built beetle is the fallback. Spiders' long legs make their bodies smaller than beetles'; tune sizes with the calibration test.
 - Teacher graph's Start lizard count comes from the settings, not from who was ticked in round 1.
 - Teacher starting-bugs box stops at 600; the server's SET_DEBUG_BUGS goes to 1450 but has no button yet.
+
+## Credits
+
+- Bug models (`game/assets/models/beetle.glb`, `spider.glb`): made by Sean Miner for this game, 2026-11-11.

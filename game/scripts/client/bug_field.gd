@@ -64,7 +64,7 @@ func set_bugs(wire_bugs: Array) -> void:
 			continue
 		var mm: MultiMesh = MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = _coloured(shapes[k % n_shapes], HabitatLayout.COLOURS[k / n_shapes])
+		mm.mesh = coloured(shapes[k % n_shapes], HabitatLayout.COLOURS[k / n_shapes])
 		mm.instance_count = list.size()
 		for i: int in list.size():
 			var a: Array = list[i]
@@ -159,7 +159,7 @@ static func _bug_shapes() -> Array[Mesh]:
 	if not _shapes.is_empty():
 		return _shapes
 	for path: String in MODEL_PATHS:
-		var m: Mesh = _merge_model(path)
+		var m: Mesh = merge_model(path, MODEL_LENGTH, -HabitatLayout.BUG_RADIUS)
 		if m != null:
 			_shapes.append(m)
 	if _shapes.is_empty():
@@ -167,9 +167,11 @@ static func _bug_shapes() -> Array[Mesh]:
 	return _shapes
 
 
-static func _merge_model(path: String) -> Mesh:
+## A model file merged into one mesh (node transforms baked in), scaled so its longest side is `length`,
+## centred in x/z, lowest point at y = `base`. Null if it is missing or empty. Also used for the habitat decor.
+static func merge_model(path: String, length: float, base: float) -> Mesh:
 	if not ResourceLoader.exists(path):
-		push_warning("bug model missing: %s" % path)
+		push_warning("model missing: %s" % path)
 		return null
 	var ps: PackedScene = load(path) as PackedScene
 	if ps == null:
@@ -189,10 +191,10 @@ static func _merge_model(path: String) -> Mesh:
 	var longest: float = maxf(box.size.x, maxf(box.size.y, box.size.z))
 	if longest <= 0.0:
 		return null
-	var k: float = MODEL_LENGTH / longest
+	var k: float = length / longest
 	var centre: Vector3 = box.get_center()
-	# Scale about the model's centre, then lift so its lowest point sits on the surface (-BUG_RADIUS).
-	var fit: Transform3D = Transform3D(Basis.from_scale(Vector3.ONE * k), Vector3(-centre.x * k, -box.position.y * k - HabitatLayout.BUG_RADIUS, -centre.z * k))
+	# Scale about the model's centre, then lift so its lowest point sits at `base`.
+	var fit: Transform3D = Transform3D(Basis.from_scale(Vector3.ONE * k), Vector3(-centre.x * k, -box.position.y * k + base, -centre.z * k))
 	var st: SurfaceTool = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for part: Array in parts:
@@ -212,8 +214,8 @@ static func _collect_meshes(node: Node, xf: Transform3D, out: Array) -> void:
 		_collect_meshes(c, here, out)
 
 
-## The shape with one flat colour. Culling is off because mirrored legs (negative scale) flip their faces.
-static func _coloured(shape: Mesh, colour: Color) -> Mesh:
+## The shape with one flat colour. Culling is off: mirrored legs (negative scale) and thin leaves show both faces.
+static func coloured(shape: Mesh, colour: Color) -> Mesh:
 	var mesh: Mesh = shape.duplicate() as Mesh
 	var mat: StandardMaterial3D = StandardMaterial3D.new()
 	mat.albedo_color = colour

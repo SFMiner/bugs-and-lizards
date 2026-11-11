@@ -13,6 +13,22 @@ const BUG_RADIUS: float = 0.07
 const SPAWN_SPACING: float = 0.55
 const SEED: int = 20261109
 
+## Decor: the owner's models, drawn by the client. Kinds: 0 plant, 1-4 mushrooms, 5 log, 6-8 rocks. Plants and
+## mushrooms are walk-through cover: bugs may sit under leaves and caps, only the stem is kept clear. Logs and rocks
+## are solid: bugs stay off their whole footprint. Mix by weight (owner, 2026-11-11): 75 plant : 30 fungi : 10 rock : 1 log,
+## each group split evenly over its models. Every item is 1x-DECOR_MAX_SCALE its base size (owner: the base size is the smallest).
+const DECOR_COUNT: int = 200
+const DECOR_GROUPS: Array = [[5], [6, 7, 8], [1, 2, 3, 4], [0]] # placed big first: logs, rocks, fungi, plants
+const DECOR_WEIGHTS: Array[int] = [1, 10, 30, 75] # same order as DECOR_GROUPS
+const DECOR_MAX_SCALE: Array[float] = [3.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0] # plants up to 3x (owner)
+const DECOR_SOLID: Array[bool] = [false, false, false, false, false, true, true, true, true]
+const DECOR_LENGTH: Array[float] = [0.7, 0.3, 0.3, 0.3, 0.3, 1.5, 0.6, 0.6, 0.6] # longest side at scale 1, metres
+## Measured from the models with the longest side = 1: full = farthest point from the centre (spacing),
+## stem = farthest point in the bottom 10% of the height (kept clear of bugs on walk-through kinds).
+const DECOR_FULL: Array[float] = [0.392, 0.459, 0.553, 0.326, 0.355, 0.507, 0.698, 0.545, 0.403]
+const DECOR_STEM: Array[float] = [0.071, 0.242, 0.118, 0.098, 0.179, 0.507, 0.698, 0.545, 0.403]
+const DECOR_CLEAR: float = 0.12 # gap kept between a decor footprint and a bug's centre
+
 ## Surface and bug colours. Bugs draw from these four equally (fixed mix, not inherited: GDD §6).
 const COLOURS: Array[Color] = [
 	Color(0.32, 0.50, 0.22, 1), # moss green
@@ -74,11 +90,68 @@ static func boxes() -> Array:
 	return out
 
 
-## Every place a bug may be put: floor points clear of boxes and the start area, plus slab tops.
+## Decor items: Array of {pos: Vector3 (base, on the floor), kind: int, yaw: float (radians), scale: float,
+## radius: float (full footprint), keep: float (radius kept clear of bug centres, before DECOR_CLEAR)}.
+## On open floor only: clear of boxes, the start area and each other.
+static func decor() -> Array:
+	var kinds: Array[int] = []
+	var total_w: int = 0
+	for w: int in DECOR_WEIGHTS:
+		total_w += w
+	var counts: Array[int] = []
+	var left: int = DECOR_COUNT
+	for g: int in DECOR_GROUPS.size():
+		var c: int = DECOR_COUNT * DECOR_WEIGHTS[g] / total_w if g < DECOR_GROUPS.size() - 1 else left
+		counts.append(c)
+		left -= c
+	for g: int in DECOR_GROUPS.size():
+		var models: Array = DECOR_GROUPS[g]
+		for i: int in counts[g]:
+			kinds.append(int(models[i % models.size()]))
+	var out: Array = []
+	var bx: Array = boxes()
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = SEED + 3
+	for kind: int in kinds:
+		# Size is picked before the spot, so crowding does not bias the sizes toward small.
+		var sc: float = rng.randf_range(1.0, DECOR_MAX_SCALE[kind])
+		var r: float = DECOR_FULL[kind] * DECOR_LENGTH[kind] * sc
+		for attempt: int in 200:
+			var x: float = rng.randf_range(-HALF + 0.3 + r, HALF - 0.3 - r)
+			var z: float = rng.randf_range(-HALF + 0.3 + r, HALF - 0.3 - r)
+			var yaw: float = rng.randf_range(0.0, TAU)
+			if Vector2(x - START_POS.x, z - START_POS.z).length() < START_RADIUS + 1.0 + r:
+				continue
+			var clash: bool = false
+			for b: Dictionary in bx:
+				var bp: Vector3 = b["pos"]
+				var bs: Vector3 = b["size"]
+				if absf(bp.x - x) < bs.x / 2.0 + r + 0.1 and absf(bp.z - z) < bs.z / 2.0 + r + 0.1:
+					clash = true
+					break
+			if not clash:
+				for d: Dictionary in out:
+					var dp: Vector3 = d["pos"]
+					# Leaves and caps may overlap a little (60% of their spread); solids keep their full spread.
+					var ra: float = r if DECOR_SOLID[kind] else r * 0.6
+					var rb: float = float(d["radius"]) if DECOR_SOLID[int(d["kind"])] else float(d["radius"]) * 0.6
+					if Vector2(dp.x - x, dp.z - z).length() < ra + rb + 0.1:
+						clash = true
+						break
+			if clash:
+				continue
+			var keep: float = DECOR_STEM[kind] * DECOR_LENGTH[kind] * sc
+			out.append({"pos": Vector3(x, 0.0, z), "kind": kind, "yaw": yaw, "scale": sc, "radius": r, "keep": keep})
+			break
+	return out
+
+
+## Every place a bug may be put: floor points clear of boxes, decor and the start area, plus slab tops.
 ## The bug's centre is BUG_RADIUS above the surface.
 static func spawn_points() -> PackedVector3Array:
 	var pts: PackedVector3Array = PackedVector3Array()
 	var bx: Array = boxes()
+	var dc: Array = decor()
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = SEED + 2
 	var n: int = int((SIZE - 1.0) / SPAWN_SPACING)
@@ -102,6 +175,12 @@ static func spawn_points() -> PackedVector3Array:
 				else:
 					blocked = true
 					break
+			if not blocked and y == 0.0:
+				for d: Dictionary in dc:
+					var dp: Vector3 = d["pos"]
+					if Vector2(dp.x - x, dp.z - z).length() < float(d["keep"]) + DECOR_CLEAR:
+						blocked = true
+						break
 			if not blocked:
 				pts.append(Vector3(x, y + BUG_RADIUS, z))
 	return pts

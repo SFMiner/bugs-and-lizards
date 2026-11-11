@@ -35,6 +35,7 @@ Design: `Bugs-and-Lizards-GDD-v0.3.md` (frozen). Build plan: `IMPLEMENTATION-PLA
 - Teacher New game returns to the setup panel with the old names filled in; the old game keeps running until it expires, and Back to game reopens it.
 - When all 8 game slots are used, creating a game drops the game that has had nobody connected for longest (games with anyone connected are kept).
 - Apply settings changes only ecosystems still waiting to start round 1; a played one keeps its stage until Reset, and its card says so in red while the picked stage differs.
+- Decor: 200 items by weight 75 plant : 30 fungi : 10 rock : 1 log (owner), each model of a group equally, 1-2x base size (plants 1-3x), placed by a fixed seed on open floor. Bugs may sit under leaves and caps (only stems kept 12 cm clear); rocks and logs are solid (box collision from the model bounds) and bugs stay off them. leaves and caps may overlap a little; 1279 spawn points left. Base sizes and colours picked by the manager.
 - Students can leave their game from the waiting screen ("Wrong game or name?"); the seat stays taken until the teacher releases it.
 
 ## Later
@@ -44,9 +45,11 @@ Design: `Bugs-and-Lizards-GDD-v0.3.md` (frozen). Build plan: `IMPLEMENTATION-PLA
 - Keyboard-only play, digit keys on the join pad and Tab order not yet tried by a human.
 - Bots out-catch humans by far; the §4 calibration target needs real players.
 - Bugs are the beetle and spider models in `game/assets/models/` (picked per bug from its id, recoloured in code to one flat floor colour, random facing, longest side 16 cm); the code-built beetle is the fallback. Spiders' long legs make their bodies smaller than beetles'; tune sizes with the calibration test.
+- Decor (owner, 2026-11-11): good for breaking line of sight; when more plant models exist, raise to 3-4x the count (600-800) at about 2/3 plants, 1/3 fungi. Recheck the spawn-point count against the bug budget then.
 - Teacher graph's Start lizard count comes from the settings, not from who was ticked in round 1.
-- Teacher starting-bugs box stops at 600; the server's SET_DEBUG_BUGS goes to 1450 but has no button yet.
+- Teacher starting-bugs box stops at 600; the server's SET_DEBUG_BUGS goes to 1279 (the spawn-point count) but has no button yet.
 
 ## Credits
 
 - Bug models (`game/assets/models/beetle.glb`, `spider.glb`): made by Sean Miner for this game, 2026-11-11.
+- Plant, mushroom, log and rock models (`game/assets/models/plants/`): made by Sean Miner for this game, 2026-11-11.

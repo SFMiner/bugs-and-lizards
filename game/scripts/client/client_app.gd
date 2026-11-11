@@ -43,6 +43,7 @@ func _ready() -> void:
 		_join.joined.connect(_on_joined)
 		_summary = SummaryScreen.new()
 		_summary.visible = false
+		_summary.leave_requested.connect(_on_leave_game)
 		_ui.add_child(_summary)
 		_hunt = HuntView.new()
 		add_child(_hunt)
@@ -85,6 +86,16 @@ func _on_joined(student_name: String, token: String, room: int, code: String) ->
 	_seat = {"code": code, "token": token, "name": student_name, "room": room}
 	_save(KEY_SEAT, _seat)
 	_show_summary()
+
+
+## Student leaves their game: forget the seat in this tab and show the code pad. The seat stays taken on the
+## server until the teacher releases it; joining another game moves this connection there.
+func _on_leave_game() -> void:
+	_save(KEY_SEAT, {})
+	_seat = {}
+	_end_hunt_view()
+	_join.reset()
+	_show_join()
 
 
 func _on_message(msg: Dictionary) -> void:

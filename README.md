@@ -32,11 +32,14 @@ Design: `Bugs-and-Lizards-GDD-v0.3.md` (frozen). Build plan: `IMPLEMENTATION-PLA
 - Seat token kept per browser tab (sessionStorage), so two tabs on one machine are two students; teacher token in localStorage.
 - PICK_NAME with a name not on the roster answers `name_taken` (no separate reason code).
 - No miss delay after a capture press that hits nothing: the sweep test showed it is not needed.
+- Teacher New game returns to the setup panel with the old names filled in; the old game keeps running until it expires, and Back to game reopens it.
+- When all 8 game slots are used, creating a game drops the game that has had nobody connected for longest (games with anyone connected are kept).
+- Students can leave their game from the waiting screen ("Wrong game or name?"); the seat stays taken until the teacher releases it.
 
 ## Later
 
-- Teacher lizard-picker checkbox labels are low contrast (light grey on white).
 - Release seat has no confirm step.
+- Keys once died in old browser tabs (letters never reached the page; cause not found); fresh tabs with Ctrl+Shift+R work in Chrome and Vivaldi. Hunt HUD shows a temporary key/focus readout; a window-level key listener feeds the movement keys when they miss the canvas. Remove the readout once settled.
 - Keyboard-only play, digit keys on the join pad and Tab order not yet tried by a human.
 - Bots out-catch humans by far; the §4 calibration target needs real players.
 - Bugs are 14 cm across and look like specks at a few metres; tune with the calibration test.

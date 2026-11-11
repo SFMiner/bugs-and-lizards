@@ -165,7 +165,7 @@ func state(now_s: float) -> Dictionary:
 		"room": index, "phase": phase, "round": round_number, "stage": stage, "paused": paused,
 		"bugs_start": round_bugs_start, "caught": caught_total(), "remaining": bugs.size(),
 		"seconds_left": snappedf(seconds_left(now_s), 0.1), "hunters": hunter_names(),
-		"members": members.duplicate(), "history": history.duplicate(true),
+		"members": members.duplicate(), "history": history.duplicate(true), "end_reason": end_reason,
 	}
 
 

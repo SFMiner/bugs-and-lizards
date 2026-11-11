@@ -166,7 +166,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	var key: InputEventKey = event as InputEventKey
 	if not key.pressed or key.echo:
 		return
-	var k: int = key.keycode
+	# Physical key first: with an input method (IME) on, keycode can be wrong while physical_keycode is right.
+	var k: int = key.physical_keycode if key.physical_keycode != KEY_NONE else key.keycode
 	var digit: int = -1
 	if k >= KEY_0 and k <= KEY_9:
 		digit = k - KEY_0
@@ -253,6 +254,12 @@ func _on_roster(msg: Dictionary) -> void:
 func _on_pick(nm: String) -> void:
 	_show_message("Joining as %s..." % nm, false)
 	_send(Protocol.PICK_NAME, {Protocol.F_CODE: _code, Protocol.F_NAME: nm})
+
+
+## Back to an empty code pad (the student left their game).
+func reset() -> void:
+	_on_clear()
+	_on_back_to_code()
 
 
 func _on_back_to_code() -> void:

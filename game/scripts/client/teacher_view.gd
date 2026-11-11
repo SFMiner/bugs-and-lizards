@@ -30,6 +30,10 @@ var _status: Label = null
 var _setup_box: VBoxContainer = null
 var _session_box: VBoxContainer = null
 var _names_edit: TextEdit = null
+var _back_btn: Button = null
+var _prev_code: String = "" # game left with New game; Back returns to it
+var _prev_token: String = ""
+var _roster_names: Array[String] = []
 var _code_label: Label = null
 var _spin_rooms: SpinBox = null
 var _spin_bugs: SpinBox = null
@@ -136,7 +140,13 @@ func _build_setup(box: VBoxContainer) -> void:
 	_names_edit.custom_minimum_size = Vector2(0, 260)
 	_names_edit.gui_input.connect(_on_names_input)
 	box.add_child(_names_edit)
-	box.add_child(_button("Create game", Vector2(320, 72), 28, _on_create))
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	box.add_child(row)
+	row.add_child(_button("Create game", Vector2(320, 72), 28, _on_create))
+	_back_btn = _button("Back to game", Vector2(320, 72), 28, _on_back_to_game)
+	_back_btn.visible = false
+	row.add_child(_back_btn)
 
 
 func _build_session(box: VBoxContainer) -> void:
@@ -150,6 +160,7 @@ func _build_session(box: VBoxContainer) -> void:
 	row.add_child(_button("Start hunt", Vector2(280, 80), 28, _on_start_hunt))
 	row.add_child(_button("Stop hunt", Vector2(280, 80), 28, _on_stop_hunt))
 	row.add_child(_button("Next round", Vector2(280, 80), 28, _on_advance))
+	row.add_child(_button("New game", Vector2(200, 80), 24, _on_new_game))
 
 	box.add_child(_text_label("Game settings (apply to every ecosystem)", 28))
 	_stage_group = ButtonGroup.new()
@@ -329,6 +340,9 @@ func _on_create() -> void:
 	if names.is_empty():
 		_set_status("Type at least one name, one per line.")
 		return
+	if _net == null or not _net.is_open():
+		_set_status("Can't reach the game server. Wait a few seconds and press Create game again; if it keeps failing, the server is down.")
+		return
 	_set_status("Creating the game...")
 	_net_send(Protocol.CREATE_SESSION, {Protocol.F_NAMES: names})
 
@@ -339,10 +353,34 @@ func _on_session_created(msg: Dictionary) -> void:
 	_resuming = false
 	_config_filled = false
 	_roster_sig = ""
+	_back_btn.visible = false
 	_show_session(true)
 	_code_label.text = "Game code: %s" % _code
 	_set_status("Game created. Students type this code on their screens.")
 	session_ready.emit(_code, _token)
+
+
+## Back to the setup panel for a new code. The old game keeps running on the server (its students stay in it,
+## and it expires once nobody is connected); Back to game reopens it. The saved token changes only on Create.
+func _on_new_game() -> void:
+	_prev_code = _code
+	_prev_token = _token
+	_code = ""
+	_token = ""
+	_resuming = false
+	_roster_sig = ""
+	_prune_rooms({})
+	_names_edit.text = "
+".join(_roster_names)
+	_back_btn.text = "Back to game %s" % _prev_code
+	_back_btn.visible = true
+	_show_session(false)
+	_set_status("Edit the names if needed, then press Create game for a new code.")
+
+
+func _on_back_to_game() -> void:
+	_back_btn.visible = false
+	resume(_prev_code, _prev_token)
 
 
 # === SESSION COMMANDS ===
@@ -395,8 +433,8 @@ func _set_stage_pressed(s: int) -> void:
 # === TEACHER_STATE ===
 func _on_state(msg: Dictionary) -> void:
 	var st: Dictionary = _as_dict(msg.get(Protocol.F_STATE, {}))
-	if st.is_empty():
-		return
+	if st.is_empty() or _token == "":
+		return # no game open (after New game the old game still sends its state until we leave it)
 	_resuming = false
 	_code = str(msg.get(Protocol.F_CODE, st.get("code", _code)))
 	_show_session(true)
@@ -517,6 +555,10 @@ func _rebuild_room_inner(idx: int, room: Dictionary, rec: Dictionary) -> void:
 	if paused:
 		phase_line += " (PAUSED)"
 	inner.add_child(_text_label(phase_line, 24))
+	if phase == Protocol.PH_ENDED:
+		var why: Label = _text_label("%s This ecosystem is over: Next round and Start hunt do nothing here. Reset starts it again from round 1." % SummaryScreen.end_text(str(room.get("end_reason", "")), -1), 22)
+		why.add_theme_color_override("font_color", COL_ALERT)
+		inner.add_child(why)
 
 	var counts: Label = _text_label("", 24)
 	inner.add_child(counts)
@@ -544,6 +586,8 @@ func _rebuild_room_inner(idx: int, room: Dictionary, rec: Dictionary) -> void:
 			var nm: String = str(m)
 			var cb: CheckBox = CheckBox.new()
 			cb.text = nm
+			for c: String in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
+				cb.add_theme_color_override(c, COL_INK)
 			cb.button_pressed = nm in hunters
 			inner.add_child(cb)
 			picks[nm] = cb
@@ -618,6 +662,7 @@ func _update_roster(roster: Array) -> void:
 	if sig == _roster_sig:
 		return
 	_roster_sig = sig
+	_roster_names.clear()
 	_clear(_roster_grid)
 	for h: String in ["Name", "Ecosystem", "Seat", "Connection", ""]:
 		_roster_grid.add_child(_cell_label(h, 22))
@@ -626,6 +671,7 @@ func _update_roster(roster: Array) -> void:
 			continue
 		var e: Dictionary = raw
 		var nm: String = str(e.get("name", ""))
+		_roster_names.append(nm)
 		var taken: bool = bool(e.get("taken", false))
 		var connected: bool = bool(e.get("connected", false))
 		_roster_grid.add_child(_cell_label(nm, 22))

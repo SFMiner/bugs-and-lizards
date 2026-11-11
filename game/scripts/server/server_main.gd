@@ -118,6 +118,8 @@ func _create_session(id: int, msg: Dictionary, now: float) -> void:
 	for code: String in dead:
 		_sessions.erase(code)
 	if _sessions.size() >= Protocol.MAX_SESSIONS:
+		_drop_oldest_unattended()
+	if _sessions.size() >= Protocol.MAX_SESSIONS:
 		send(id, Protocol.ERROR, {Protocol.F_REASON: Protocol.R_TOO_MANY_SESSIONS})
 		return
 	var code_new: String = ""
@@ -139,6 +141,20 @@ func _create_session(id: int, msg: Dictionary, now: float) -> void:
 
 
 ## A connection that joins another session stops belonging to the previous one.
+## Full server: drop the game that has had nobody connected for longest (left by New game or a closed tab), so
+## abandoned games never lock out a new class. Games with anyone connected are never dropped.
+func _drop_oldest_unattended() -> void:
+	var pick: String = ""
+	var since: float = INF
+	for code: String in _sessions:
+		var s: GameSession = _sessions[code]
+		if s.connected_count() == 0 and s.idle_since < since:
+			since = s.idle_since
+			pick = code
+	if pick != "":
+		_sessions.erase(pick)
+
+
 func _leave_other_session(id: int, new_code: String, now: float) -> void:
 	var old: String = _conn_session.get(id, "")
 	if old != "" and old != new_code:

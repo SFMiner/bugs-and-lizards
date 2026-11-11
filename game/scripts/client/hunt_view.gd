@@ -47,6 +47,7 @@ func begin_hunt(msg: Dictionary) -> void:
 	_flash_label.modulate.a = 0.0
 	_hunting = true
 	_pos_timer = 0.0
+	_focus_canvas()
 	_show_all(true)
 	_player.set_active(true)
 
@@ -60,6 +61,12 @@ func end_hunt() -> void:
 		_bugs.set_bugs([])
 	_show_all(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+## Web: put the browser's keyboard focus on the game canvas, so keys reach Godot without a click first.
+func _focus_canvas() -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("(function(){var c=document.getElementById('canvas');if(c){c.focus();}})()", true)
 
 
 func on_bug_gone(id: int) -> void:

@@ -4,6 +4,8 @@ extends Control
 ## the latest round summary and a history table for the organizer. Messages arrive through handle(),
 ## routed by main.gd. Only messages for this student's room are shown.
 
+signal leave_requested
+
 const COL_BG: Color = Color(0.93, 0.95, 0.9, 1)
 const COL_INK: Color = Color(0.1, 0.12, 0.1, 1)
 
@@ -79,6 +81,13 @@ func _ensure_built() -> void:
 
 	_header = _text_label("You are watching this round", 34)
 	column.add_child(_header)
+	var leave: Button = Button.new()
+	leave.text = "Wrong game or name? Leave this game"
+	leave.add_theme_font_size_override("font_size", 22)
+	leave.custom_minimum_size = Vector2(420, 52)
+	leave.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	leave.pressed.connect(func() -> void: leave_requested.emit())
+	column.add_child(leave)
 	_phase = _text_label("", 30)
 	column.add_child(_phase)
 	_round = _text_label("", 24)
@@ -204,7 +213,7 @@ func _on_summary(msg: Dictionary) -> void:
 		_summary_box.add_child(_text_label("%s: %d bugs — starved" % [n, int(captures.get(n, 0))], 22))
 
 	if bool(s.get("ended", false)):
-		_summary_box.add_child(_text_label(_end_text(str(s.get("end_reason", "")), int(s.get("bugs_next_start", 0))), 26))
+		_summary_box.add_child(_text_label(end_text(str(s.get("end_reason", "")), int(s.get("bugs_next_start", 0))), 26))
 
 	var history: Array = _as_array(s.get("history", []))
 	_fill_history(history, stage == 4)
@@ -231,9 +240,10 @@ func _update_graph(s: Dictionary, history: Array, stage: int) -> void:
 	_graph.set_history(history, stage, start_bugs, start_lizards)
 
 
-func _end_text(reason: String, bugs_next: int) -> String:
+## Shared with the teacher card; bugs_next < 0 leaves the overrun count out.
+static func end_text(reason: String, bugs_next: int) -> String:
 	if reason == RoundRules.END_OVERRUN:
-		return "The bugs have overrun the habitat: %d bugs" % bugs_next
+		return "The bugs have overrun the habitat." if bugs_next < 0 else "The bugs have overrun the habitat: %d bugs" % bugs_next
 	if reason == RoundRules.END_NO_BUGS:
 		return "No bugs are left."
 	if reason == RoundRules.END_NO_LIZARDS:

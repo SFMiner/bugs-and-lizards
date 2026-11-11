@@ -472,6 +472,10 @@ static func _csv(s: String) -> String:
 
 
 # === HELPERS ===
+func connected_count() -> int:
+	return _connected_count()
+
+
 func _connected_count() -> int:
 	return teacher_conns.size() + student_conns.size()
 

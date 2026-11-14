@@ -6,7 +6,8 @@ extends Node
 
 const KEY_SEAT: String = "bl_seat"
 const KEY_TEACHER: String = "bl_teacher"
-const RECONNECT_S: float = 2.0
+const RECONNECT_S: float = 2.0 # first retry; doubles on each failure up to RECONNECT_MAX_S, plus jitter
+const RECONNECT_MAX_S: float = 30.0
 
 var teacher_mode: bool = false
 var _net: NetClient
@@ -17,6 +18,7 @@ var _teacher: TeacherView
 var _hunt: HuntView
 var _seat: Dictionary = {} # {code, token, name, room}
 var _reconnect_timer: float = -1.0
+var _reconnect_delay: float = RECONNECT_S
 var _hunting: bool = false
 var _histories: Dictionary = {} # room -> history (teacher graphs)
 
@@ -60,6 +62,7 @@ func _process(delta: float) -> void:
 
 
 func _on_connected() -> void:
+	_reconnect_delay = RECONNECT_S
 	if teacher_mode:
 		var saved: Dictionary = _load(KEY_TEACHER)
 		if not saved.is_empty():
@@ -74,7 +77,9 @@ func _on_connected() -> void:
 
 
 func _on_disconnected() -> void:
-	_reconnect_timer = RECONNECT_S
+	# Spread retries out, so a class that lost the network (or was refused by nginx) does not reconnect in step.
+	_reconnect_timer = _reconnect_delay * randf_range(1.0, 1.5)
+	_reconnect_delay = minf(_reconnect_delay * 2.0, RECONNECT_MAX_S)
 
 
 func _on_teacher_session(code: String, token: String) -> void:

@@ -12,6 +12,7 @@ var _sessions: Dictionary = {} # code -> GameSession
 var _conn_session: Dictionary = {} # conn id -> code
 var _log_dir: String = "" # catch log (names + counts) only when BL_CATCH_LOG=1; off on the VPS
 var _teacher_key: String = "" # BL_TEACHER_KEY from the unit's environment; "" = anyone may create a game (local)
+var _max_peers: int = Protocol.MAX_PEERS # a var so the test can lower it
 var _conn: Dictionary = {} # conn id -> {t0, tokens, last, bad}: abuse limits (protocol.gd)
 
 
@@ -38,7 +39,7 @@ func _process(_delta: float) -> void:
 	var now: float = _now()
 	while _tcp.is_connection_available():
 		var conn: StreamPeerTCP = _tcp.take_connection()
-		if _peers.size() >= Protocol.MAX_PEERS:
+		if _peers.size() >= _max_peers:
 			conn.disconnect_from_host()
 			continue
 		var ws: WebSocketPeer = WebSocketPeer.new()

@@ -19,7 +19,7 @@ const MAX_MESSAGE_BYTES: int = 16384 # client-to-server; larger frames are dropp
 const MAX_PEERS: int = 360 # open connections in total (8 games x 41 seats, plus margin); more are refused
 const MSG_RATE: float = 30.0 # messages per second a connection may send on average (position reports are 10)
 const MSG_BURST: float = 60.0 # ...and in one burst; a connection over the limit is closed
-const JOIN_TIMEOUT_S: float = 600.0 # a connection that has not joined any game by then is closed (the page reconnects)
+const JOIN_TIMEOUT_S: float = 120.0 # a connection that has not joined any game by then is closed (the page reconnects)
 const MAX_BAD_TRIES: int = 5 # wrong codes or teacher keys on one connection before it is closed
 
 # === FIELDS ===

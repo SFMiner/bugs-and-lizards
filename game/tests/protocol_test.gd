@@ -2,7 +2,7 @@ extends SceneTree
 ## End-to-end protocol test: starts the server in this process and plays it with clients and bots.
 ## Run: Godot --headless --path game --script res://tests/protocol_test.gd
 
-const EXPECTED_TOTAL: int = 167
+const EXPECTED_TOTAL: int = 168
 const WATCHDOG_SECONDS: float = 175.0
 const PORTS: Array[int] = [3390, 3391, 3392, 3393, 3394, 3395, 3396, 3397, 3398]
 const SPEED: float = 5.0 # bot walking speed in this test (the server allows 9 m/s)
@@ -704,7 +704,7 @@ func test_f_bad_inputs() -> void:
 		b.disconnect_now()
 
 
-## Abuse limits (protocol.gd): wrong codes, message rate, teacher key, join timeout. MAX_PEERS is not tested here.
+## Abuse limits (protocol.gd): wrong codes, message rate, teacher key, join timeout, connection cap.
 func test_g_limits() -> void:
 	print("-- g) limits")
 	var t: Peer = await make_teacher(["Ann"])
@@ -746,3 +746,9 @@ func test_g_limits() -> void:
 	ck(not idle.net.is_open(), "g: a connection that never joined is closed after JOIN_TIMEOUT_S")
 	await frames(10)
 	ck(t.net.is_open() and k.net.is_open(), "g: teachers in a game stay connected")
+	# connection cap (lowered to the current count, so the next connection is refused before the handshake)
+	server.set("_max_peers", (server.get("_peers") as Dictionary).size())
+	var over: Peer = Peer.new()
+	var opened: bool = await over.open(self, url)
+	ck(not opened, "g: a connection over the cap is refused")
+	server.set("_max_peers", Protocol.MAX_PEERS)

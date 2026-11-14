@@ -48,4 +48,6 @@ $files = Get-ChildItem $web -File | Where-Object Name -ne "keytest.html" | ForEa
 scp -q @files "${Vps}:/srv/bugs-and-lizards/www.new/"
 # Pre-compressed .gz beside each file, so nginx gzip_static sends them as they are and need not gzip 40 MB per student.
 ssh $Vps "cd /srv/bugs-and-lizards && gzip -k -9 -f www.new/*.wasm www.new/*.pck www.new/*.js www.new/*.html && chmod -R a+rX www.new && rm -rf www.old && mv www www.old && mv www.new www && systemctl restart bugs-and-lizards.service && sleep 2 && systemctl is-active bugs-and-lizards.service && journalctl -u bugs-and-lizards.service -n 5 --no-pager"
+$line = ssh $Vps "journalctl -u bugs-and-lizards.service -n 20 --no-pager -o cat | grep 'server: listening' | tail -1"
+if ($line -notmatch "catch log off, teacher key required") { throw "server did not start with the teacher key: $line" }
 Write-Host "deployed"

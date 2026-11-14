@@ -10,9 +10,10 @@ User=bugsliz
 Group=bugsliz
 WorkingDirectory=/srv/bugs-and-lizards
 Environment=BL_LOG_DIR=/srv/bugs-and-lizards/logs
-# BL_TEACHER_KEY=<key> lives only on the VPS, in this root-only file (mode 600), never in the repo. Without it anyone
-# may create a game. The catch log (names) stays off unless the file also sets BL_CATCH_LOG=1.
-EnvironmentFile=-/etc/bugs-and-lizards.env
+# BL_TEACHER_KEY=<key> lives only on the VPS, in this root-only file (mode 600), never in the repo. No dash: if the
+# file is missing the unit fails to start rather than run with no key. The catch log (names) stays off unless the
+# file also sets BL_CATCH_LOG=1.
+EnvironmentFile=/etc/bugs-and-lizards.env
 ExecStart=/srv/bugs-and-lizards/godot --headless --main-pack /srv/bugs-and-lizards/www/index.pck -- --server --port=3311
 Restart=on-failure
 RestartSec=3

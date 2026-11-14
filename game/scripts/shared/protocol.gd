@@ -46,6 +46,9 @@ const F_ASSIGN: String = "assign" # Dictionary name -> room int
 const F_LIZARDS: String = "lizards" # Array of names
 const F_VALUE: String = "value"
 const F_TEACHER_KEY: String = "teacher_key" # CREATE_SESSION, when the server sets BL_TEACHER_KEY
+const F_SLOT: String = "slot" # tag-in slot id, "S<k>" (RoundRules)
+const F_MUTANT: String = "mutant" # HUNT_START: bool, this hunter is a mutant (sees the ordinary view)
+const F_HANDICAP: String = "handicap" # HUNT_START: float 0..1, contrast a wild-type hunter loses (0 below Stage 4)
 
 # === CLIENT -> SERVER ===
 const PING: String = "ping" # {time}
@@ -56,8 +59,12 @@ const PICK_NAME: String = "pick_name" # student: {code, name} -> JOINED or ERROR
 const REJOIN: String = "rejoin" # student: {code, token} -> JOINED (+ HUNT_START if mid-hunt and hunting)
 const POSITION: String = "pos" # hunter: {p, yaw}, about POS_HZ times a second while hunting
 const CAPTURE: String = "capture" # hunter: {id} -> CAPTURE_OK or CAPTURE_REJECTED
+# Stages 3-4 tag-in (GDD §5). Hands can change at any time; picks only while the room's tag-in is open (PH_STUDY).
+const RAISE_HAND: String = "raise_hand" # student: {value: bool}; lowered by default and again when they become a lizard
+const PICK_OFFSPRING: String = "pick_offspring" # parent: {name} fills the parent's lowest unfilled slot; final.
+	# A refused pick gets ERROR {reason: R_PICK_TAKEN (someone else picked them first: pick again) or R_CANNOT_PICK}.
 # Teacher commands. All carry {token}. Session-wide unless they name a room.
-const CONFIGURE: String = "configure" # {config: {stage, rooms, bugs_start, lizards_start, hunt_seconds, bug_budget}, assign}
+const CONFIGURE: String = "configure" # {config: {stage, rooms, bugs_start, lizards_start, hunt_seconds, bug_budget, handicap (int %)}, assign}
 const SET_LIZARDS: String = "set_lizards" # {room, lizards: [names]} starting lizards, round 1 only
 const START_HUNT: String = "start_hunt" # every room not paused or ended
 const STOP_HUNT: String = "stop_hunt" # ends running hunts now
@@ -66,6 +73,12 @@ const PAUSE_ROOM: String = "pause_room" # {room, value: bool} a paused room skip
 const RESET_ROOM: String = "reset_room" # {room} back to round 1 with the current config
 const RELEASE_SEAT: String = "release_seat" # {name} frees the name so it can be picked again
 const SET_DEBUG_BUGS: String = "set_debug_bugs" # {value: int} overrides bugs_start for every room (pressure test)
+const ASSIGN_SLOT: String = "assign_slot" # {room, slot, name} teacher puts a raised-hand student in a slot (replaces any pick)
+# Stage 4 mutant (GDD §7), only while the room has no mutant yet:
+const CHOOSE_MUTANT: String = "choose_mutant" # {room, slot} the filled slot that becomes the first mutant when the
+	# open tag-in closes ("" = automatic, at random among filled slots)
+const ADD_MUTANT: String = "add_mutant" # {room, name} teacher fallback: that student's current lizard becomes a mutant
+	# now (between hunts); the next round's record has mutant_fallback true, so the intervention shows in the data
 
 # === SERVER -> CLIENT ===
 const PONG: String = "pong" # {time}
@@ -73,7 +86,7 @@ const ERROR: String = "error" # {reason}
 const SESSION_CREATED: String = "session_created" # {code, token}
 const ROSTER: String = "roster" # {code, names: [{name, taken: bool}]}
 const JOINED: String = "joined" # {name, token, room}
-const HUNT_START: String = "hunt_start" # hunters only: {room, round, seconds, bugs, p (start area), count}
+const HUNT_START: String = "hunt_start" # hunters only: {room, round, seconds, bugs, p (start area), count, mutant, handicap}
 const BUG_GONE: String = "bug_gone" # hunters in the room: {id}
 const CAPTURE_OK: String = "capture_ok" # {id, count}
 const CAPTURE_REJECTED: String = "capture_rejected" # {id, reason}
@@ -93,6 +106,8 @@ const R_GONE: String = "gone" # bug already captured
 const R_RANGE: String = "range"
 const R_BAD_TOKEN: String = "bad_token"
 const R_BAD_TEACHER_KEY: String = "bad_teacher_key"
+const R_PICK_TAKEN: String = "pick_taken" # that classmate is already in a slot
+const R_CANNOT_PICK: String = "cannot_pick" # no open slot for you, tag-in closed, or that name is not pickable
 
 # Room phases (state.phase)
 const PH_SETUP: String = "setup" # before round 1's hunt
@@ -100,13 +115,24 @@ const PH_HUNT: String = "hunt"
 const PH_STUDY: String = "study" # summary shown, waiting for ADVANCE
 const PH_ENDED: String = "ended"
 
-## SUMMARY.summary keys: round, stage, bugs_start, BUGS (= bugs uncaught), bugs_next_start, LIZARDS,
-## MUTANTS, starved: [names], survived: [names], captures: {name: int}, hunt_seconds (actual),
-## ended: bool, end_reason: String, history: [record...] (RoundRules records, round 1..n).
+## SUMMARY.summary keys: round, stage, bugs_start, BUGS (= bugs uncaught), bugs_next_start, LIZARDS (all),
+## WILD, MUTANTS, mutant_arisen, starved: [names], survived: [names], captures: {name: int}, hunt_seconds (actual),
+## ended: bool, end_reason: String, history: [record...] (RoundRules records, round 1..n),
+## new_mutants: [names] (students whose lizard became a mutant this round: first mutant, mutant babies, fallback).
+##
+## Stages 3-4: while a round's tag-in is open (PH_STUDY with earned slots) the SUMMARY has tagin_open: true and
+## no final LIZARDS/MUTANTS yet (LIZARDS = survivors so far); ADVANCE closes it, appends the round's record to
+## history, sends the room a final SUMMARY (tagin_open false), then goes on to the next round or ends.
 ##
 ## ROOM_STATE.state / TEACHER_STATE.state.rooms[i] keys: room, phase, round, stage, paused,
-## bugs_start, caught, remaining, seconds_left, hunters: [names], members: [names], history.
-## TEACHER_STATE.state also has: config, roster: [{name, room, taken, connected}], code.
+## bugs_start, caught, remaining, seconds_left, hunters: [names], members: [names], history,
+## mutants: [names of students whose current lizard is a mutant], mutant_arisen: bool,
+## mutant_slot: String (teacher's CHOOSE_MUTANT pick, "" = automatic),
+## hands: [names in the room with a raised hand], tagin: [{slot, parent (student name), student ("" = unfilled),
+## by_teacher: bool}] ([] when no tag-in is open), can_pick: [names a parent or the teacher may pick now:
+## in the room, hand raised, not a surviving lizard, not already in a slot].
+## TEACHER_STATE.state also has: config, roster: [{name, room, taken, connected, hand: bool,
+## been_lizard: bool (has hunted at least once this session)}], code.
 
 
 # === HELPERS ===

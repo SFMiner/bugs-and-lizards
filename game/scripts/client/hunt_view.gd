@@ -22,6 +22,9 @@ var _pos_timer: float = 0.0
 var _pending: Dictionary = {} # bug ids with a CAPTURE in flight
 var _others: Dictionary = {} # other hunter name -> LizardAvatar
 var _flash_tween: Tween
+var _vision_layer: CanvasLayer # sunglasses overlay, below the HUD layer
+var _vision_rect: ColorRect
+var _vision_label: Label
 
 
 func setup(net: NetClient) -> void:
@@ -48,6 +51,7 @@ func begin_hunt(msg: Dictionary) -> void:
 	_flash_label.modulate.a = 0.0
 	_hunting = true
 	_pos_timer = 0.0
+	_apply_vision(bool(msg.get(Protocol.F_MUTANT, false)), float(msg.get(Protocol.F_HANDICAP, 0.0)))
 	_focus_canvas()
 	_show_all(true)
 	_player.set_active(true)
@@ -61,6 +65,8 @@ func end_hunt() -> void:
 	if _bugs != null:
 		_bugs.set_bugs([])
 	_clear_others()
+	if _vision_layer != null:
+		_vision_layer.visible = false
 	_show_all(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
@@ -168,7 +174,25 @@ func _ensure_built() -> void:
 	add_child(_player)
 	_player.capture_pressed.connect(_on_capture_pressed)
 	_player.set_active(false)
+	_build_vision()
 	_build_hud()
+
+
+## Stage 4 vision (GDD s7): a wild-type hunter loses bug-to-background contrast (information, not brightness).
+## handicap 0 or a mutant: no overlay at all.
+func _apply_vision(is_mutant: bool, handicap: float) -> void:
+	var h: float = clampf(handicap, 0.0, 1.0)
+	var on: bool = h > 0.0 and not is_mutant
+	_vision_layer.visible = on
+	if on:
+		(_vision_rect.material as ShaderMaterial).set_shader_parameter("handicap", h)
+	if is_mutant:
+		_vision_label.text = "Mutant: you see clearly in the dim forest"
+	elif h > 0.0:
+		_vision_label.text = "You wear sunglasses (wild type)"
+	else:
+		_vision_label.text = ""
+	_vision_label.visible = _vision_label.text != ""
 
 
 func _show_all(v: bool) -> void:
@@ -200,6 +224,21 @@ func _flash(text: String) -> void:
 	_flash_tween.tween_property(_flash_label, "modulate:a", 0.0, 0.4)
 
 
+func _build_vision() -> void:
+	_vision_layer = CanvasLayer.new()
+	_vision_layer.layer = 0
+	_vision_layer.visible = false
+	add_child(_vision_layer)
+	_vision_rect = ColorRect.new()
+	_vision_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_vision_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var sh: Shader = load("res://shaders/sunglasses.gdshader")
+	var mat: ShaderMaterial = ShaderMaterial.new()
+	mat.shader = sh
+	_vision_rect.material = mat
+	_vision_layer.add_child(_vision_rect)
+
+
 func _build_hud() -> void:
 	_hud = CanvasLayer.new()
 	add_child(_hud)
@@ -216,6 +255,9 @@ func _build_hud() -> void:
 	box.add_child(_count_label)
 	_time_label = _make_label()
 	box.add_child(_time_label)
+	_vision_label = _make_label()
+	_vision_label.visible = false
+	box.add_child(_vision_label)
 	_set_count(0)
 	# Crosshair: a fixed plus with a dark outline, always identical.
 	_add_cross_bar([-10, -1, 20, 2], 2, Color(0, 0, 0, 0.8))

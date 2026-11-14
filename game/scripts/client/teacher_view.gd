@@ -42,8 +42,11 @@ var _spin_bugs: SpinBox = null
 var _spin_lizards: SpinBox = null
 var _spin_hunt: SpinBox = null
 var _spin_budget: SpinBox = null
+var _spin_handicap: SpinBox = null
+var _handicap_label: Label = null
 var _rooms_grid: GridContainer = null
 var _roster_grid: GridContainer = null
+var _advance_note: Label = null
 
 
 func _ready() -> void:
@@ -169,6 +172,10 @@ func _build_session(box: VBoxContainer) -> void:
 	row.add_child(_button("Stop hunt", Vector2(280, 80), 28, _on_stop_hunt))
 	row.add_child(_button("Next round", Vector2(280, 80), 28, _on_advance))
 	row.add_child(_button("New game", Vector2(200, 80), 24, _on_new_game))
+	_advance_note = _text_label("Next round closes the baby picking; empty slots stay unfilled.", 22)
+	_advance_note.add_theme_color_override("font_color", COL_ALERT)
+	_advance_note.visible = false
+	box.add_child(_advance_note)
 
 	box.add_child(_text_label("Game settings (apply to every ecosystem)", 28))
 	_stage_group = ButtonGroup.new()
@@ -208,6 +215,12 @@ func _build_session(box: VBoxContainer) -> void:
 	_spin_budget = _spin(50, 2000, 10)
 	grid.add_child(_cell_label("Bug budget", 22))
 	grid.add_child(_spin_budget)
+	_spin_handicap = _spin(StageConfig.HANDICAP_MIN, StageConfig.HANDICAP_MAX, 5)
+	_spin_handicap.value = float(StageConfig.HANDICAP_DEFAULT)
+	_handicap_label = _cell_label("Sunglasses strength % (Stage 4)", 22)
+	grid.add_child(_handicap_label)
+	grid.add_child(_spin_handicap)
+	_set_stage_pressed(_stage)
 	box.add_child(_button("Apply settings", Vector2(280, 64), 26, _on_apply))
 
 	box.add_child(_text_label("Ecosystems", 28))
@@ -413,6 +426,8 @@ func _on_apply() -> void:
 		"hunt_seconds": int(_spin_hunt.value),
 		"bug_budget": int(_spin_budget.value),
 	}
+	if _stage == 4:
+		cfg["handicap"] = int(_spin_handicap.value)
 	_send_cmd(Protocol.CONFIGURE, {Protocol.F_CONFIG: cfg, Protocol.F_ASSIGN: {}})
 	_set_status("Settings sent.")
 
@@ -432,11 +447,15 @@ func _fill_from_config(cfg: Dictionary) -> void:
 	_spin_lizards.value = float(cfg.get("lizards_start", 1))
 	_spin_hunt.value = float(cfg.get("hunt_seconds", StageConfig.HUNT_SECONDS_DEFAULT))
 	_spin_budget.value = float(cfg.get("bug_budget", StageConfig.BUG_BUDGET_DEFAULT))
+	_spin_handicap.value = float(cfg.get("handicap", StageConfig.HANDICAP_DEFAULT))
 	_set_stage_pressed(clampi(int(cfg.get("stage", 1)), 1, 4))
 
 
 func _set_stage_pressed(s: int) -> void:
 	_stage = s
+	if _spin_handicap != null:
+		_spin_handicap.visible = s == 4
+		_handicap_label.visible = s == 4
 	for i: int in range(_stage_btns.size()):
 		_stage_btns[i].set_pressed_no_signal(i == s - 1)
 
@@ -470,6 +489,11 @@ func _on_state(msg: Dictionary) -> void:
 		seen[idx] = true
 		_update_room(idx, room)
 	_prune_rooms(seen)
+	var any_open: bool = false
+	for raw2: Variant in _last_rooms:
+		if typeof(raw2) == TYPE_DICTIONARY and not _as_array((raw2 as Dictionary).get("tagin", [])).is_empty():
+			any_open = true
+	_advance_note.visible = any_open
 	_update_roster(_as_array(st.get("roster", [])))
 
 
@@ -525,6 +549,12 @@ func _room_structure(room: Dictionary) -> Dictionary:
 		"paused": bool(room.get("paused", false)),
 		"hunters": _as_array(room.get("hunters", [])),
 		"members": _as_array(room.get("members", [])),
+		"tagin": _as_array(room.get("tagin", [])),
+		"can_pick": _as_array(room.get("can_pick", [])),
+		"hist_n": _as_array(room.get("history", [])).size(),
+		"mutants": _as_array(room.get("mutants", [])),
+		"arisen": bool(room.get("mutant_arisen", false)),
+		"mutant_slot": str(room.get("mutant_slot", "")),
 	}
 
 
@@ -597,6 +627,11 @@ func _rebuild_room_inner(idx: int, room: Dictionary, rec: Dictionary) -> void:
 	inner.add_child(_text_label("Hunting: %s" % ("nobody" if hunters.is_empty() else _join_names(hunters)), 22))
 	inner.add_child(_text_label("Members (%d): %s" % [members.size(), "none" if members.is_empty() else _join_names(members)], 22))
 
+	if stage >= 3:
+		_build_tagin(idx, room, inner)
+	if stage == 4:
+		_build_mutant(idx, room, inner)
+
 	var row: HBoxContainer = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	inner.add_child(row)
@@ -615,6 +650,151 @@ func _rebuild_room_inner(idx: int, room: Dictionary, rec: Dictionary) -> void:
 			inner.add_child(cb)
 			picks[nm] = cb
 		inner.add_child(_button("Set lizards", Vector2(240, 60), 24, _on_set_lizards.bind(idx)))
+
+
+## Stages 3-4: baby-slot accounting for the open tag-in, a per-round table, and an Assign row per unfilled slot.
+func _build_tagin(idx: int, room: Dictionary, inner: VBoxContainer) -> void:
+	var tagin: Array = _as_array(room.get("tagin", []))
+	var can_pick: Array = _as_array(room.get("can_pick", []))
+	var hands: Array = _as_array(room.get("hands", []))
+	inner.add_child(_text_label("Hands up (%d): %s" % [hands.size(), "nobody" if hands.is_empty() else _join_names(hands)], 22))
+	if not tagin.is_empty():
+		var filled: int = 0
+		for raw: Variant in tagin:
+			if str(_as_dict(raw).get("student", "")) != "":
+				filled += 1
+		inner.add_child(_text_label("Babies earned %d · picked %d · unfilled %d" % [tagin.size(), filled, tagin.size() - filled], 24))
+		for raw: Variant in tagin:
+			var slot: Dictionary = _as_dict(raw)
+			var parent: String = str(slot.get("parent", ""))
+			var kid: String = str(slot.get("student", ""))
+			if kid != "":
+				var how: String = " (teacher assigned)" if bool(slot.get("by_teacher", false)) else ""
+				inner.add_child(_text_label("%s's baby: %s%s" % [parent, kid, how], 22))
+				continue
+			inner.add_child(_text_label("%s's baby: not picked yet" % parent, 22))
+			if can_pick.is_empty():
+				inner.add_child(_text_label("Nobody with a raised hand to assign.", 20))
+				continue
+			var srow: HBoxContainer = HBoxContainer.new()
+			srow.add_theme_constant_override("separation", 10)
+			inner.add_child(srow)
+			var opt: OptionButton = OptionButton.new()
+			opt.custom_minimum_size = Vector2(200, 52)
+			opt.add_theme_font_size_override("font_size", 22)
+			for nm: Variant in can_pick:
+				opt.add_item(str(nm))
+			srow.add_child(opt)
+			srow.add_child(_button("Assign", Vector2(140, 52), 22, _on_assign.bind(idx, str(slot.get("slot", "")), opt)))
+	var hist: Array = _as_array(room.get("history", []))
+	var has_slots: bool = false
+	for raw3: Variant in hist:
+		if _as_dict(raw3).has("slots_earned"):
+			has_slots = true
+	if has_slots:
+		inner.add_child(_text_label("Babies by round", 22))
+		var grid: GridContainer = GridContainer.new()
+		grid.columns = 4
+		grid.add_theme_constant_override("h_separation", 20)
+		inner.add_child(grid)
+		for h: String in ["Round", "Babies earned", "picked", "unfilled"]:
+			grid.add_child(_cell_label(h, 20))
+		for raw4: Variant in hist:
+			var r: Dictionary = _as_dict(raw4)
+			if not r.has("slots_earned"):
+				continue
+			grid.add_child(_cell_label(str(int(r.get("round", 0))), 20))
+			grid.add_child(_cell_label(str(int(r.get("slots_earned", 0))), 20))
+			grid.add_child(_cell_label(str(int(r.get("slots_filled", 0))), 20))
+			grid.add_child(_cell_label(str(int(r.get("slots_unfilled", 0))), 20))
+
+
+## Stage 4: mutant names, the first-mutant chooser (open tag-in, no mutant yet), the teacher fallback
+## (between hunts, no mutant yet), and a population table with WILD TYPE and MUTANTS once a mutant exists.
+func _build_mutant(idx: int, room: Dictionary, inner: VBoxContainer) -> void:
+	var mutants: Array = _as_array(room.get("mutants", []))
+	var arisen: bool = bool(room.get("mutant_arisen", false))
+	var tagin: Array = _as_array(room.get("tagin", []))
+	var phase: String = str(room.get("phase", ""))
+	inner.add_child(_text_label("Mutants: %s" % ("none yet" if mutants.is_empty() else _join_names(mutants)), 24))
+	if not arisen and not tagin.is_empty():
+		inner.add_child(_text_label("First mutant:", 22))
+		var opt: OptionButton = OptionButton.new()
+		opt.custom_minimum_size = Vector2(260, 52)
+		opt.add_theme_font_size_override("font_size", 22)
+		opt.add_item("Automatic (random)")
+		opt.set_item_metadata(0, "")
+		var want: String = str(room.get("mutant_slot", ""))
+		for raw: Variant in tagin:
+			var slot: Dictionary = _as_dict(raw)
+			var kid: String = str(slot.get("student", ""))
+			if kid == "":
+				continue
+			opt.add_item(kid)
+			opt.set_item_metadata(opt.item_count - 1, str(slot.get("slot", "")))
+			if str(slot.get("slot", "")) == want and want != "":
+				opt.select(opt.item_count - 1)
+		opt.item_selected.connect(_on_choose_mutant.bind(idx, opt))
+		inner.add_child(opt)
+		inner.add_child(_text_label("Tip: don't give it to a student who is slower at finding bugs.", 20))
+	elif not arisen and tagin.is_empty() and (phase == Protocol.PH_STUDY or phase == Protocol.PH_SETUP):
+		var lizards: Array = _as_array(room.get("hunters", []))
+		if not lizards.is_empty():
+			inner.add_child(_text_label("Add a mutant (teacher)", 22))
+			var srow: HBoxContainer = HBoxContainer.new()
+			srow.add_theme_constant_override("separation", 10)
+			inner.add_child(srow)
+			var opt2: OptionButton = OptionButton.new()
+			opt2.custom_minimum_size = Vector2(200, 52)
+			opt2.add_theme_font_size_override("font_size", 22)
+			for nm: Variant in lizards:
+				opt2.add_item(str(nm))
+			srow.add_child(opt2)
+			srow.add_child(_button("Add mutant", Vector2(180, 52), 22, _on_add_mutant.bind(idx, opt2)))
+			inner.add_child(_text_label("Shown in the data as a teacher intervention. Suggested after round 2 if no baby has been born.", 20))
+	var hist: Array = _as_array(room.get("history", []))
+	if not hist.is_empty():
+		inner.add_child(_text_label("Population by round", 22))
+		var with_m: bool = SummaryScreen.history_has_mutants(hist)
+		var grid: GridContainer = GridContainer.new()
+		grid.columns = 5 if with_m else 3
+		grid.add_theme_constant_override("h_separation", 20)
+		inner.add_child(grid)
+		var heads: Array = ["Round", "BUGS", "LIZARDS"]
+		if with_m:
+			heads.append("WILD TYPE")
+			heads.append("MUTANTS")
+		for h: Variant in heads:
+			grid.add_child(_cell_label(str(h), 20))
+		for raw2: Variant in hist:
+			var r: Dictionary = _as_dict(raw2)
+			grid.add_child(_cell_label(str(int(r.get("round", 0))), 20))
+			grid.add_child(_cell_label(str(int(r.get("BUGS", 0))), 20))
+			grid.add_child(_cell_label(str(int(r.get("LIZARDS", 0))), 20))
+			if with_m:
+				var seen: bool = bool(r.get("mutant_arisen", false))
+				grid.add_child(_cell_label(str(int(r.get("WILD", 0))) if seen else "–", 20))
+				var mt: String = str(int(r.get("MUTANTS", 0))) if seen else "–"
+				if bool(r.get("mutant_fallback", false)):
+					mt += " (teacher)"
+				grid.add_child(_cell_label(mt, 20))
+
+
+func _on_choose_mutant(index: int, idx: int, opt: OptionButton) -> void:
+	_send_cmd(Protocol.CHOOSE_MUTANT, {Protocol.F_ROOM: idx, Protocol.F_SLOT: str(opt.get_item_metadata(index))})
+
+
+func _on_add_mutant(idx: int, opt: OptionButton) -> void:
+	if opt.item_count == 0 or opt.selected < 0:
+		return
+	_send_cmd(Protocol.ADD_MUTANT, {Protocol.F_ROOM: idx, Protocol.F_NAME: opt.get_item_text(opt.selected)})
+	_set_status("Mutant added for Ecosystem %d (shown in the data as a teacher intervention)." % (idx + 1))
+
+
+func _on_assign(idx: int, slot_id: String, opt: OptionButton) -> void:
+	if opt.item_count == 0 or opt.selected < 0:
+		return
+	_send_cmd(Protocol.ASSIGN_SLOT, {Protocol.F_ROOM: idx, Protocol.F_SLOT: slot_id, Protocol.F_NAME: opt.get_item_text(opt.selected)})
 
 
 func _phase_text(phase: String) -> String:
@@ -681,13 +861,20 @@ func _on_set_lizards(idx: int) -> void:
 
 # === ROSTER ===
 func _update_roster(roster: Array) -> void:
-	var sig: String = JSON.stringify(roster)
+	var notes_on: bool = false
+	for raw5: Variant in _last_rooms:
+		if typeof(raw5) == TYPE_DICTIONARY and int((raw5 as Dictionary).get("stage", 1)) >= 3:
+			notes_on = true
+	var sig: String = JSON.stringify([roster, notes_on])
 	if sig == _roster_sig:
 		return
 	_roster_sig = sig
 	_roster_names.clear()
 	_clear(_roster_grid)
-	for h: String in ["Name", "Ecosystem", "Seat", "Connection", ""]:
+	_roster_grid.columns = 6 if notes_on else 5
+	for h: String in ["Name", "Ecosystem", "Seat", "Connection", "Notes", ""]:
+		if h == "Notes" and not notes_on:
+			continue
 		_roster_grid.add_child(_cell_label(h, 22))
 	for raw: Variant in roster:
 		if typeof(raw) != TYPE_DICTIONARY:
@@ -701,6 +888,13 @@ func _update_roster(roster: Array) -> void:
 		_roster_grid.add_child(_cell_label("Ecosystem %d" % (int(e.get("room", 0)) + 1), 22))
 		_roster_grid.add_child(_cell_label("taken" if taken else "free", 22))
 		_roster_grid.add_child(_cell_label("connected" if connected else "not connected", 22))
+		if notes_on:
+			var notes: Array = []
+			if bool(e.get("hand", false)):
+				notes.append("hand up")
+			if not bool(e.get("been_lizard", false)):
+				notes.append("not yet a lizard")
+			_roster_grid.add_child(_cell_label(", ".join(PackedStringArray(notes)), 22))
 		if taken:
 			_roster_grid.add_child(_button("Release", Vector2(160, 52), 22, _on_release.bind(nm)))
 		else:

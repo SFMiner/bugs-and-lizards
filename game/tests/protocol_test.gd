@@ -2,8 +2,8 @@ extends SceneTree
 ## End-to-end protocol test: starts the server in this process and plays it with clients and bots.
 ## Run: Godot --headless --path game --script res://tests/protocol_test.gd
 
-const EXPECTED_TOTAL: int = 168
-const WATCHDOG_SECONDS: float = 175.0
+const EXPECTED_TOTAL: int = 261
+const WATCHDOG_SECONDS: float = 260.0
 const PORTS: Array[int] = [3390, 3391, 3392, 3393, 3394, 3395, 3396, 3397, 3398]
 const SPEED: float = 5.0 # bot walking speed in this test (the server allows 9 m/s)
 
@@ -195,6 +195,8 @@ func _run() -> void:
 	await test_d_rooms()
 	await test_e_rejoin()
 	await test_f_bad_inputs()
+	await test_h_tagin()
+	await test_i_mutant()
 	await test_g_limits()
 	print("protocol_test: %d s" % ((Time.get_ticks_msec() - t0) / 1000))
 	if failed == 0 and passed == EXPECTED_TOTAL:
@@ -441,10 +443,14 @@ func test_b_stage2() -> void:
 	t.cmd(Protocol.SET_LIZARDS, {Protocol.F_ROOM: 0, Protocol.F_LIZARDS: ["Ann", "Ben"]})
 	var infos: Array = await play_rounds(t, bots, 2, 50, ["Ann", "Ben"], 2, "b")
 	eq(infos.size(), 2, "b: two rounds were played")
+	var sm2: Dictionary = (bots["Ann"] as BotClient).start_msg
+	ck(sm2.has(Protocol.F_HANDICAP) and is_zero_approx(float(sm2[Protocol.F_HANDICAP])), "b: Stage 2 HUNT_START has handicap 0")
+	eq(sm2.get(Protocol.F_MUTANT, "missing"), false, "b: Stage 2 HUNT_START has mutant false")
 	if infos.size() == 2:
 		var s1: Dictionary = infos[0]["summary"]
 		var s2_start: Dictionary = infos[1]["start_bugs"]
 		eq(int(s1.get("BUGS", -1)), 43, "b r1: uncaught bugs = 43")
+		eq(bool(s1.get("tagin_open", true)), false, "b r1: Stage 2 summary has tagin_open false")
 		eq(int(s1.get("bugs_next_start", -1)), 129, "b r1: bugs_next_start = uncaught * 3")
 		eq(s2_start.size(), 129, "b r2: HUNT_START has exactly bugs_next_start bugs")
 		var seen: Dictionary = {}
@@ -702,6 +708,309 @@ func test_f_bad_inputs() -> void:
 	t.cmd(Protocol.STOP_HUNT)
 	for b: BotClient in [ann, hx]:
 		b.disconnect_now()
+
+
+# === h) STAGE 3 TAG-IN ===
+func last_err(b: BotClient) -> String:
+	return str(b.errors.back().get(Protocol.F_REASON, "?")) if not b.errors.is_empty() else "none"
+
+
+func hand(b: BotClient, up: bool) -> void:
+	b.raw(Protocol.RAISE_HAND, {Protocol.F_VALUE: up})
+
+
+func slot_student(s: Dictionary, k: int) -> String:
+	var tg: Array = ((s.get("rooms", []) as Array)[0] as Dictionary).get("tagin", [])
+	return str((tg[k] as Dictionary).get("student", "")) if tg.size() > k else ""
+
+
+func can_pick_of(s: Dictionary) -> Array:
+	return _sorted(((s.get("rooms", []) as Array)[0] as Dictionary).get("can_pick", []))
+
+
+func test_h_tagin() -> void:
+	print("-- h) stage 3 tag-in")
+	var t: Peer = await make_teacher(["Ann", "Ben", "Cy", "Di", "Ed"])
+	configure(t, 3, 1, 60, 2)
+	var ann: BotClient = await make_bot(t.code, "Ann", "hunter", {"max_captures": 15, "no_tagin": true})
+	var ben: BotClient = await make_bot(t.code, "Ben", "hunter", {"max_captures": 4, "no_tagin": true})
+	var cy: BotClient = await make_bot(t.code, "Cy", "idle", {"no_tagin": true})
+	var di: BotClient = await make_bot(t.code, "Di", "idle", {"no_tagin": true})
+	var ed: BotClient = await make_bot(t.code, "Ed", "idle", {"no_tagin": true})
+	t.cmd(Protocol.SET_LIZARDS, {Protocol.F_ROOM: 0, Protocol.F_LIZARDS: ["Ann", "Ben"]})
+	t.cmd(Protocol.START_HUNT)
+	await wait_until(func() -> bool: return ann.captures_now >= 15 and ben.captures_now >= 4, 60.0)
+	eq([ann.captures_now, ben.captures_now], [15, 4], "h: Ann caught 15 and Ben 4")
+	t.cmd(Protocol.STOP_HUNT)
+	await wait_until(func() -> bool: return ann.summaries.size() >= 1 and ed.summaries.size() >= 1, 6.0)
+	var sm: Dictionary = {}
+	if not ann.summaries.is_empty():
+		sm = ann.summaries[0].get(Protocol.F_SUMMARY, {})
+	eq(bool(sm.get("tagin_open", false)), true, "h r1: tag-in is open")
+	eq(int(sm.get("slots_earned", -1)), 2, "h r1: Ann earned 2 slots")
+	eq(int(sm.get("LIZARDS", -1)), 1, "h r1: LIZARDS so far is the one survivor")
+	eq(int(sm.get("BUGS", -1)), 41, "h r1: BUGS is 60 - 19")
+	eq(int(sm.get("bugs_next_start", -1)), 123, "h r1: bugs_next_start is 41 * 3")
+	eq(_sorted(sm.get("starved", [])), ["Ben"], "h r1: Ben starved")
+	eq((sm.get("history", []) as Array).size(), 0, "h r1: no history record while the tag-in is open")
+	eq(bool(sm.get("ended", true)), false, "h r1: not ended while open")
+	ck(ed.summaries.size() >= 1 and ed.summaries[0] == ann.summaries[0], "h r1: observer got the same open SUMMARY")
+	await t.wait_state(func(s: Dictionary) -> bool: return not ((s.get("rooms", []) as Array)[0] as Dictionary).get("tagin", []).is_empty(), 4.0)
+	var slots: Array = t.room(0).get("tagin", [])
+	eq(slots.size(), 2, "h r1: state lists 2 slots")
+	if slots.size() == 2:
+		eq([str(slots[0]["slot"]), str(slots[0]["parent"]), str(slots[0]["student"])], ["S1", "Ann", ""], "h r1: slot S1 is Ann's and unfilled")
+	eq(str(t.room(0).get("phase", "?")), Protocol.PH_STUDY, "h r1: room is in study")
+	# no raised hand: not pickable
+	var e0: int = ann.errors.size()
+	ann.raw(Protocol.PICK_OFFSPRING, {Protocol.F_NAME: "Cy"})
+	await wait_until(func() -> bool: return ann.errors.size() > e0, 3.0)
+	eq(last_err(ann), Protocol.R_CANNOT_PICK, "h: a student without a raised hand cannot be picked")
+	hand(cy, true)
+	hand(di, true)
+	hand(ben, true)
+	await t.wait_state(func(s: Dictionary) -> bool: return can_pick_of(s) == ["Ben", "Cy", "Di"], 4.0)
+	eq(_sorted(t.room(0).get("can_pick", [])), ["Ben", "Cy", "Di"], "h: can_pick is the raised hands, starved Ben included, no survivor")
+	var cy_row: Dictionary = {}
+	for row: Dictionary in (t.state["roster"] as Array):
+		if row["name"] == "Cy":
+			cy_row = row
+	eq(bool(cy_row.get("hand", false)), true, "h: roster shows Cy's hand")
+	# a student with no slot cannot pick
+	var e1: int = cy.errors.size()
+	cy.raw(Protocol.PICK_OFFSPRING, {Protocol.F_NAME: "Di"})
+	await wait_until(func() -> bool: return cy.errors.size() > e1, 3.0)
+	eq(last_err(cy), Protocol.R_CANNOT_PICK, "h: a student with no slot cannot pick")
+	# Ann picks Cy; picking Cy again is taken; a survivor is not pickable
+	ann.raw(Protocol.PICK_OFFSPRING, {Protocol.F_NAME: "Cy"})
+	await t.wait_state(func(s: Dictionary) -> bool: return slot_student(s, 0) == "Cy", 4.0)
+	slots = t.room(0).get("tagin", [])
+	eq(slot_student(t.state, 0), "Cy", "h: Ann's pick filled S1")
+	if slots.size() == 2:
+		eq(bool(slots[0]["by_teacher"]), false, "h: a parent's pick is not by_teacher")
+	e0 = ann.errors.size()
+	ann.raw(Protocol.PICK_OFFSPRING, {Protocol.F_NAME: "Cy"})
+	await wait_until(func() -> bool: return ann.errors.size() > e0, 3.0)
+	eq(last_err(ann), Protocol.R_PICK_TAKEN, "h: picking Cy again is pick_taken")
+	hand(ann, true)
+	await frames(10)
+	e0 = ann.errors.size()
+	ann.raw(Protocol.PICK_OFFSPRING, {Protocol.F_NAME: "Ann"})
+	await wait_until(func() -> bool: return ann.errors.size() > e0, 3.0)
+	eq(last_err(ann), Protocol.R_CANNOT_PICK, "h: a surviving lizard is not pickable")
+	# teacher fills the 2nd slot
+	t.cmd(Protocol.ASSIGN_SLOT, {Protocol.F_ROOM: 0, Protocol.F_SLOT: "S2", Protocol.F_NAME: "Di"})
+	await t.wait_state(func(s: Dictionary) -> bool: return slot_student(s, 1) == "Di", 4.0)
+	slots = t.room(0).get("tagin", [])
+	eq(slot_student(t.state, 1), "Di", "h: teacher assigned Di to S2")
+	if slots.size() == 2:
+		eq(bool(slots[1]["by_teacher"]), true, "h: the teacher's assignment is by_teacher")
+	eq(t.room(0).get("can_pick", []), ["Ben"], "h: only Ben is still pickable")
+	t.send(Protocol.ASSIGN_SLOT, {Protocol.F_TOKEN: "wrong", Protocol.F_ROOM: 0, Protocol.F_SLOT: "S2", Protocol.F_NAME: "Ben"})
+	var bad: Dictionary = await t.wait_msg(Protocol.ERROR)
+	eq(str(bad.get(Protocol.F_REASON, "?")), Protocol.R_NOT_TEACHER, "h: ASSIGN_SLOT needs the teacher token")
+	# a rejoin during the open tag-in resends the open summary (Ed reconnects and plays the observer from here)
+	var ed_token: String = ed.token
+	ed.disconnect_now()
+	await wait_until(func() -> bool: return not ed.net.is_open(), 3.0)
+	await frames(10)
+	ed = await make_bot(t.code, "Ed", "idle", {"token": ed_token, "no_tagin": true})
+	await wait_until(func() -> bool: return not ed.summaries.is_empty(), 4.0)
+	var open_again: bool = false
+	if not ed.summaries.is_empty():
+		open_again = bool((ed.summaries[0].get(Protocol.F_SUMMARY, {}) as Dictionary).get("tagin_open", false))
+	eq(open_again, true, "h: rejoin gets the open-tag-in SUMMARY")
+	# ADVANCE closes the tag-in
+	t.cmd(Protocol.ADVANCE)
+	await wait_until(func() -> bool: return ann.summaries.size() >= 2 and ed.summaries.size() >= 2, 6.0)
+	var fin: Dictionary = {}
+	if ann.summaries.size() >= 2:
+		fin = ann.summaries[1].get(Protocol.F_SUMMARY, {})
+	eq(bool(fin.get("tagin_open", true)), false, "h r1: final summary has tagin_open false")
+	eq(int(fin.get("LIZARDS", -1)), 3, "h r1: LIZARDS = 1 survivor + 2 offspring")
+	eq(int(fin.get("slots_earned", -1)), 2, "h r1: slots_earned 2")
+	eq(int(fin.get("slots_filled", -1)), 2, "h r1: slots_filled 2")
+	eq(int(fin.get("slots_unfilled", -1)), 0, "h r1: slots_unfilled 0")
+	eq((fin.get("history", []) as Array).size(), 1, "h r1: history has the round's record")
+	eq(bool(fin.get("ended", true)), false, "h r1: round 1 did not end the stage")
+	ck(ed.summaries.size() >= 2 and ed.summaries[1] == ann.summaries[1], "h r1: observer got the same final SUMMARY")
+	await t.wait_state(func(s: Dictionary) -> bool:
+		var r0: Dictionary = (s.get("rooms", []) as Array)[0]
+		return int(r0.get("round", 0)) == 2 and r0.get("phase", "") == Protocol.PH_SETUP, 4.0)
+	eq(int(t.room(0).get("round", 0)), 2, "h: ADVANCE went on to round 2")
+	eq(t.room(0).get("hands", []), ["Ben"], "h: picked students' hands are lowered, Ben's stays")
+	eq((t.room(0).get("tagin", [1]) as Array).size(), 0, "h: tagin is empty once closed")
+	# round 2 hunt goes to the 3 lizards
+	ann.opts["max_captures"] = 0
+	t.cmd(Protocol.START_HUNT)
+	await wait_until(func() -> bool: return ann.hunts_started == 2 and cy.hunts_started == 1 and di.hunts_started == 1, 6.0)
+	eq([ann.hunts_started, cy.hunts_started, di.hunts_started, ben.hunts_started, ed.hunts_started], [2, 1, 1, 1, 0], "h r2: HUNT_START went to Ann, Cy and Di only")
+	eq(_sorted(t.room(0).get("hunters", [])), ["Ann", "Cy", "Di"], "h r2: three hunters")
+	var been: Array = []
+	for row: Dictionary in (t.state["roster"] as Array):
+		if bool(row["been_lizard"]):
+			been.append(str(row["name"]))
+	eq(_sorted(been), ["Ann", "Ben", "Cy", "Di"], "h: roster been_lizard lists everyone who has hunted")
+	t.cmd(Protocol.STOP_HUNT)
+	await wait_until(func() -> bool: return ann.summaries.size() >= 3, 6.0)
+	# second case: advance with an unfilled slot
+	t.cmd(Protocol.RESET_ROOM, {Protocol.F_ROOM: 0})
+	await t.wait_state(func(s: Dictionary) -> bool:
+		var r0: Dictionary = (s.get("rooms", []) as Array)[0]
+		return int(r0.get("round", 0)) == 1 and r0.get("phase", "") == Protocol.PH_SETUP, 4.0)
+	t.cmd(Protocol.SET_LIZARDS, {Protocol.F_ROOM: 0, Protocol.F_LIZARDS: ["Ann", "Ben"]})
+	ann.opts["max_captures"] = 15
+	ben.opts["max_captures"] = 0
+	var n_sum: int = ann.summaries.size()
+	t.cmd(Protocol.START_HUNT)
+	await wait_until(func() -> bool: return ann.hunts_started == 3 and ann.captures_now >= 15, 60.0)
+	eq(ann.captures_now, 15, "h2: Ann caught 15 again")
+	t.cmd(Protocol.STOP_HUNT)
+	await wait_until(func() -> bool: return ann.summaries.size() > n_sum, 6.0)
+	hand(cy, true)
+	await t.wait_state(func(s: Dictionary) -> bool: return can_pick_of(s).has("Cy"), 4.0)
+	ann.raw(Protocol.PICK_OFFSPRING, {Protocol.F_NAME: "Cy"})
+	await t.wait_state(func(s: Dictionary) -> bool: return slot_student(s, 0) == "Cy", 4.0)
+	t.cmd(Protocol.ADVANCE)
+	await wait_until(func() -> bool: return ann.summaries.size() >= n_sum + 2, 6.0)
+	var fin2: Dictionary = {}
+	if ann.summaries.size() >= n_sum + 2:
+		fin2 = ann.summaries[n_sum + 1].get(Protocol.F_SUMMARY, {})
+	eq(int(fin2.get("slots_earned", -1)), 2, "h2: slots_earned 2")
+	eq(int(fin2.get("slots_filled", -1)), 1, "h2: slots_filled 1")
+	eq(int(fin2.get("slots_unfilled", -1)), 1, "h2: slots_unfilled 1")
+	eq(int(fin2.get("LIZARDS", -1)), 2, "h2: LIZARDS counts the survivor and the one filled slot")
+	for b: BotClient in [ann, ben, cy, di, ed]:
+		b.disconnect_now()
+	t.net._ws.close()
+
+
+# === i) STAGE 4 MUTANT ===
+func teacher_err(t: Peer, type: String, fields: Dictionary) -> String:
+	t.send(type, fields.merged({Protocol.F_TOKEN: t.token}))
+	var m: Dictionary = await t.wait_msg(Protocol.ERROR, 3.0)
+	return str(m.get(Protocol.F_REASON, "none"))
+
+
+func test_i_mutant() -> void:
+	print("-- i) stage 4 mutant")
+	var t: Peer = await make_teacher(["Ann", "Ben", "Cy"])
+	configure(t, 4, 1, 60, 2)
+	var ann: BotClient = await make_bot(t.code, "Ann", "hunter", {"max_captures": 10, "no_tagin": true})
+	var ben: BotClient = await make_bot(t.code, "Ben", "hunter", {"max_captures": 4, "no_tagin": true})
+	var cy: BotClient = await make_bot(t.code, "Cy", "idle", {"no_tagin": true})
+	t.cmd(Protocol.SET_LIZARDS, {Protocol.F_ROOM: 0, Protocol.F_LIZARDS: ["Ann", "Ben"]})
+	t.cmd(Protocol.START_HUNT)
+	await wait_until(func() -> bool: return ann.captures_now >= 10 and ben.captures_now >= 4, 60.0)
+	var hs: Dictionary = ann.start_msg
+	eq(hs.get(Protocol.F_MUTANT, "missing"), false, "i r1: HUNT_START mutant false")
+	ck(is_equal_approx(float(hs.get(Protocol.F_HANDICAP, -1.0)), 0.6), "i r1: HUNT_START handicap 0.6 at Stage 4")
+	ck(is_equal_approx(float((t.state["config"] as Dictionary).get("handicap", -1)), 60.0), "i: config handicap defaults to 60")
+	t.cmd(Protocol.STOP_HUNT)
+	await wait_until(func() -> bool: return ann.summaries.size() >= 1 and cy.summaries.size() >= 1, 6.0)
+	var sm: Dictionary = {}
+	if not ann.summaries.is_empty():
+		sm = ann.summaries[0].get(Protocol.F_SUMMARY, {})
+	eq(bool(sm.get("tagin_open", false)), true, "i r1: tag-in is open")
+	eq(int(sm.get("LIZARDS", -1)), 1, "i r1: open summary LIZARDS = all survivors")
+	eq(int(sm.get("WILD", -1)), 1, "i r1: open summary WILD = 1")
+	eq(int(sm.get("MUTANTS", -1)), 0, "i r1: open summary MUTANTS = 0")
+	eq(bool(sm.get("mutant_arisen", true)), false, "i r1: open summary mutant_arisen false")
+	await t.wait_state(func(s: Dictionary) -> bool: return not ((s.get("rooms", []) as Array)[0] as Dictionary).get("tagin", []).is_empty(), 4.0)
+	eq(t.room(0).get("mutants", ["x"]), [], "i r1: state mutants empty")
+	eq(bool(t.room(0).get("mutant_arisen", true)), false, "i r1: state mutant_arisen false")
+	eq(t.room(0).get("mutant_slot", "x"), "", "i r1: state mutant_slot empty")
+	# refusals while open: unfilled slot, unknown slot, ADD_MUTANT during the tag-in
+	eq(await teacher_err(t, Protocol.CHOOSE_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_SLOT: "S1"}), Protocol.R_CANNOT_PICK, "i: CHOOSE_MUTANT of an unfilled slot is refused")
+	eq(await teacher_err(t, Protocol.CHOOSE_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_SLOT: "S9"}), Protocol.R_CANNOT_PICK, "i: CHOOSE_MUTANT of an unknown slot is refused")
+	eq(await teacher_err(t, Protocol.ADD_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_NAME: "Ann"}), Protocol.R_CANNOT_PICK, "i: ADD_MUTANT during an open tag-in is refused")
+	t.send(Protocol.CHOOSE_MUTANT, {Protocol.F_TOKEN: "wrong", Protocol.F_ROOM: 0, Protocol.F_SLOT: ""})
+	var bad: Dictionary = await t.wait_msg(Protocol.ERROR)
+	eq(str(bad.get(Protocol.F_REASON, "?")), Protocol.R_NOT_TEACHER, "i: CHOOSE_MUTANT needs the teacher token")
+	hand(cy, true)
+	await t.wait_state(func(s: Dictionary) -> bool: return can_pick_of(s).has("Cy"), 4.0)
+	ann.raw(Protocol.PICK_OFFSPRING, {Protocol.F_NAME: "Cy"})
+	await t.wait_state(func(s: Dictionary) -> bool: return slot_student(s, 0) == "Cy", 4.0)
+	t.cmd(Protocol.CHOOSE_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_SLOT: "S1"})
+	await t.wait_state(func(s: Dictionary) -> bool: return str(((s.get("rooms", []) as Array)[0] as Dictionary).get("mutant_slot", "")) == "S1", 4.0)
+	eq(t.room(0).get("mutant_slot", "x"), "S1", "i: state shows the chosen mutant slot")
+	t.cmd(Protocol.ADVANCE)
+	await wait_until(func() -> bool: return ann.summaries.size() >= 2 and cy.summaries.size() >= 2, 6.0)
+	var fin: Dictionary = {}
+	if ann.summaries.size() >= 2:
+		fin = ann.summaries[1].get(Protocol.F_SUMMARY, {})
+	eq(bool(fin.get("tagin_open", true)), false, "i r1: final summary closed")
+	eq(int(fin.get("LIZARDS", -1)), 2, "i r1: final LIZARDS = 2")
+	eq(int(fin.get("WILD", -1)), 1, "i r1: final WILD = 1 (the parent)")
+	eq(int(fin.get("MUTANTS", -1)), 1, "i r1: final MUTANTS = 1")
+	eq(bool(fin.get("mutant_arisen", false)), true, "i r1: final mutant_arisen true")
+	eq(fin.get("new_mutants", []), ["Cy"], "i r1: new_mutants names the child")
+	var hist: Array = fin.get("history", [])
+	eq(bool((hist.back() as Dictionary).get("mutant_fallback", true)) if not hist.is_empty() else true, false, "i r1: record mutant_fallback false")
+	await t.wait_state(func(s: Dictionary) -> bool:
+		var r0: Dictionary = (s.get("rooms", []) as Array)[0]
+		return int(r0.get("round", 0)) == 2 and r0.get("phase", "") == Protocol.PH_SETUP, 4.0)
+	eq(t.room(0).get("mutants", []), ["Cy"], "i r2: state mutants is the child")
+	eq(bool(t.room(0).get("mutant_arisen", false)), true, "i r2: state mutant_arisen true")
+	eq(t.room(0).get("mutant_slot", "x"), "", "i r2: mutant_slot cleared when the tag-in closed")
+	eq(await teacher_err(t, Protocol.CHOOSE_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_SLOT: ""}), Protocol.R_CANNOT_PICK, "i: CHOOSE_MUTANT once a mutant exists is refused")
+	eq(await teacher_err(t, Protocol.ADD_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_NAME: "Ann"}), Protocol.R_CANNOT_PICK, "i: ADD_MUTANT once a mutant exists is refused")
+	ann.opts["max_captures"] = 0
+	t.cmd(Protocol.START_HUNT)
+	await wait_until(func() -> bool: return ann.hunts_started == 2 and cy.hunts_started == 1, 6.0)
+	eq(ann.start_msg.get(Protocol.F_MUTANT, "missing"), false, "i r2: the wild parent's HUNT_START mutant false")
+	ck(is_equal_approx(float(ann.start_msg.get(Protocol.F_HANDICAP, -1.0)), 0.6), "i r2: the parent's handicap is 0.6")
+	eq(cy.start_msg.get(Protocol.F_MUTANT, "missing"), true, "i r2: the child's HUNT_START mutant true")
+	ck(is_equal_approx(float(cy.start_msg.get(Protocol.F_HANDICAP, -1.0)), 0.6), "i r2: the child's handicap is 0.6")
+	t.cmd(Protocol.STOP_HUNT)
+	await wait_until(func() -> bool: return ann.summaries.size() >= 3, 6.0)
+	for b: BotClient in [ann, ben, cy]:
+		b.disconnect_now()
+	t.net._ws.close()
+
+	# fallback: no slots earned in round 1, so the teacher makes Ben a mutant between hunts
+	var t2: Peer = await make_teacher(["Ann", "Ben", "Cy"])
+	configure(t2, 4, 1, 60, 2)
+	var a2: BotClient = await make_bot(t2.code, "Ann", "hunter", {"max_captures": 5, "no_tagin": true})
+	var b2: BotClient = await make_bot(t2.code, "Ben", "hunter", {"max_captures": 5, "no_tagin": true})
+	t2.cmd(Protocol.SET_LIZARDS, {Protocol.F_ROOM: 0, Protocol.F_LIZARDS: ["Ann", "Ben"]})
+	t2.cmd(Protocol.START_HUNT)
+	await wait_until(func() -> bool: return a2.captures_now >= 5 and b2.captures_now >= 5, 60.0)
+	t2.cmd(Protocol.STOP_HUNT)
+	await wait_until(func() -> bool: return a2.summaries.size() >= 1, 6.0)
+	var s2: Dictionary = {}
+	if not a2.summaries.is_empty():
+		s2 = a2.summaries[0].get(Protocol.F_SUMMARY, {})
+	eq(bool(s2.get("tagin_open", true)), false, "i2 r1: no slots, so no tag-in")
+	eq([int(s2.get("LIZARDS", -1)), int(s2.get("WILD", -1)), int(s2.get("MUTANTS", -1))], [2, 2, 0], "i2 r1: two wild survivors")
+	eq(bool(s2.get("mutant_arisen", true)), false, "i2 r1: no mutant yet")
+	eq(s2.get("new_mutants", ["x"]), [], "i2 r1: new_mutants empty")
+	await t2.wait_state(func(s: Dictionary) -> bool: return (s.get("rooms", []) as Array)[0].get("phase", "") == Protocol.PH_STUDY, 4.0)
+	eq(await teacher_err(t2, Protocol.ADD_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_NAME: "Cy"}), Protocol.R_CANNOT_PICK, "i2: ADD_MUTANT of a student with no lizard is refused")
+	t2.cmd(Protocol.ADD_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_NAME: "Ben"})
+	await t2.wait_state(func(s: Dictionary) -> bool: return bool((s.get("rooms", []) as Array)[0].get("mutant_arisen", false)), 4.0)
+	eq(t2.room(0).get("mutants", []), ["Ben"], "i2: state mutants is Ben")
+	eq(await teacher_err(t2, Protocol.ADD_MUTANT, {Protocol.F_ROOM: 0, Protocol.F_NAME: "Ann"}), Protocol.R_CANNOT_PICK, "i2: a second ADD_MUTANT is refused")
+	t2.cmd(Protocol.ADVANCE)
+	await t2.wait_state(func(s: Dictionary) -> bool: return (s.get("rooms", []) as Array)[0].get("phase", "") == Protocol.PH_SETUP, 4.0)
+	t2.cmd(Protocol.START_HUNT)
+	await wait_until(func() -> bool: return b2.hunts_started == 2 and a2.hunts_started == 2, 6.0)
+	eq(b2.start_msg.get(Protocol.F_MUTANT, "missing"), true, "i2 r2: Ben's HUNT_START mutant true")
+	eq(a2.start_msg.get(Protocol.F_MUTANT, "missing"), false, "i2 r2: Ann's HUNT_START mutant false")
+	await wait_until(func() -> bool: return a2.captures_now >= 5 and b2.captures_now >= 5, 60.0)
+	t2.cmd(Protocol.STOP_HUNT)
+	await wait_until(func() -> bool: return a2.summaries.size() >= 2, 6.0)
+	var h2: Array = []
+	if a2.summaries.size() >= 2:
+		h2 = (a2.summaries[1].get(Protocol.F_SUMMARY, {}) as Dictionary).get("history", [])
+	eq(h2.size(), 2, "i2 r2: history has both records")
+	if h2.size() == 2:
+		eq(bool((h2[0] as Dictionary).get("mutant_fallback", true)), false, "i2: round 1 record mutant_fallback false")
+		eq(bool((h2[1] as Dictionary).get("mutant_fallback", false)), true, "i2: round 2 record mutant_fallback true")
+		eq(int((h2[1] as Dictionary).get("MUTANTS", -1)), 1, "i2: round 2 record MUTANTS 1")
+	for b: BotClient in [a2, b2]:
+		b.disconnect_now()
+	t2.net._ws.close()
 
 
 ## Abuse limits (protocol.gd): wrong codes, message rate, teacher key, join timeout, connection cap.

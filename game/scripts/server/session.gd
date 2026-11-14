@@ -11,7 +11,8 @@ const IDLE_DROP_S: float = 3.0 * 3600.0
 const TEACHER_BC_S: float = 0.5
 const ROOM_BC_S: float = 1.0
 const TEACHER_CMDS: Array[String] = [Protocol.CONFIGURE, Protocol.SET_LIZARDS, Protocol.START_HUNT, Protocol.STOP_HUNT,
-	Protocol.ADVANCE, Protocol.PAUSE_ROOM, Protocol.RESET_ROOM, Protocol.RELEASE_SEAT, Protocol.SET_DEBUG_BUGS]
+	Protocol.ADVANCE, Protocol.PAUSE_ROOM, Protocol.RESET_ROOM, Protocol.RELEASE_SEAT, Protocol.SET_DEBUG_BUGS,
+	Protocol.ASSIGN_SLOT, Protocol.CHOOSE_MUTANT, Protocol.ADD_MUTANT]
 
 var code: String = ""
 var teacher_token: String = ""
@@ -24,6 +25,8 @@ var teacher_conns: Array[int] = []
 var student_conns: Dictionary = {} # conn -> name
 var log_dir: String = "" # "" = no catch log
 var debug_bugs: int = -1
+var hands: Dictionary = {} # name -> true while the hand is raised
+var been_lizard: Dictionary = {} # name -> true once they have hunted this session
 var idle_since: float = 0.0
 var out: Array = []
 var _dirty: bool = false
@@ -116,6 +119,32 @@ func handle(conn: int, msg: Dictionary, now_s: float) -> void:
 			_on_position(conn, msg, now_s)
 		Protocol.CAPTURE:
 			_on_capture(conn, msg, now_s)
+		Protocol.RAISE_HAND:
+			_on_raise_hand(conn, msg)
+		Protocol.PICK_OFFSPRING:
+			_on_pick_offspring(conn, msg)
+		Protocol.ASSIGN_SLOT:
+			var ra: int = _room_index(msg)
+			if ra < 0:
+				_error(conn, Protocol.R_CANNOT_PICK)
+			else:
+				var why: String = rooms[ra].teacher_assign(_str(msg, Protocol.F_SLOT), _str(msg, Protocol.F_NAME), hands)
+				if why != "":
+					_error(conn, why)
+				else:
+					_dirty = true
+		Protocol.CHOOSE_MUTANT, Protocol.ADD_MUTANT:
+			var rm: int = _room_index(msg)
+			var why2: String = Protocol.R_CANNOT_PICK
+			if rm >= 0:
+				if t == Protocol.CHOOSE_MUTANT:
+					why2 = rooms[rm].choose_mutant(_str(msg, Protocol.F_SLOT))
+				else:
+					why2 = rooms[rm].add_mutant(_str(msg, Protocol.F_NAME))
+			if why2 != "":
+				_error(conn, why2)
+			else:
+				_dirty = true
 		Protocol.CONFIGURE:
 			_on_configure(msg)
 		Protocol.SET_LIZARDS:
@@ -131,6 +160,13 @@ func handle(conn: int, msg: Dictionary, now_s: float) -> void:
 					_finish_hunt(room, now_s, true)
 		Protocol.ADVANCE:
 			for room: GameRoom in rooms:
+				if room.tagin_open():
+					var fin: Dictionary = room.close_tagin()
+					for lz: Dictionary in room.lizards:
+						hands.erase(lz["student"])
+					for m: String in room.members:
+						_send_to_student(m, Protocol.SUMMARY, {Protocol.F_ROOM: room.index, Protocol.F_SUMMARY: fin})
+					_dirty = true
 				if room.advance():
 					_dirty = true
 		Protocol.PAUSE_ROOM:
@@ -184,12 +220,13 @@ func room_of(student: String) -> int:
 func teacher_state(now_s: float) -> Dictionary:
 	var rs: Array = []
 	for room: GameRoom in rooms:
-		rs.append(room.state(now_s))
+		rs.append(room.state(now_s, hands))
 	var ro: Array = []
 	for n: String in roster:
 		var seat: Dictionary = seats.get(n, {})
 		ro.append({"name": n, "room": room_of(n), "taken": not seat.is_empty(),
-			"connected": (not seat.is_empty()) and int(seat["conn"]) != 0})
+			"connected": (not seat.is_empty()) and int(seat["conn"]) != 0,
+			"hand": hands.has(n), "been_lizard": been_lizard.has(n)})
 	return {"code": code, "config": config.duplicate(), "roster": ro, "rooms": rs}
 
 
@@ -209,8 +246,9 @@ func _apply_config(provided: Dictionary, prov_assign: Dictionary) -> void:
 		d["rooms"] = cfg.get("rooms", 1)
 		d["hunt_seconds"] = cfg.get("hunt_seconds", StageConfig.HUNT_SECONDS_DEFAULT)
 		d["bug_budget"] = cfg.get("bug_budget", StageConfig.BUG_BUDGET_DEFAULT)
+		d["handicap"] = cfg.get("handicap", StageConfig.HANDICAP_DEFAULT)
 		cfg = d
-	for key: String in ["rooms", "bugs_start", "lizards_start", "hunt_seconds", "bug_budget"]:
+	for key: String in ["rooms", "bugs_start", "lizards_start", "hunt_seconds", "bug_budget", "handicap"]:
 		if provided.has(key) and _is_num(provided[key]):
 			cfg[key] = int(provided[key])
 	cfg["stage"] = clampi(int(cfg["stage"]), 1, 4)
@@ -219,6 +257,7 @@ func _apply_config(provided: Dictionary, prov_assign: Dictionary) -> void:
 	cfg["lizards_start"] = clampi(int(cfg["lizards_start"]), 0, MAX_NAMES)
 	cfg["hunt_seconds"] = clampi(int(cfg["hunt_seconds"]), StageConfig.HUNT_SECONDS_MIN, StageConfig.HUNT_SECONDS_MAX)
 	cfg["bug_budget"] = clampi(int(cfg["bug_budget"]), 1, 100000)
+	cfg["handicap"] = clampi(int(cfg.get("handicap", StageConfig.HANDICAP_DEFAULT)), StageConfig.HANDICAP_MIN, StageConfig.HANDICAP_MAX)
 	config = cfg
 	var n: int = int(cfg["rooms"])
 	var new_assign: Dictionary = {}
@@ -333,7 +372,7 @@ func _welcome(conn: int, name: String, now_s: float, rejoin: bool) -> void:
 	if ri < 0 or not rejoin:
 		return
 	var room: GameRoom = rooms[ri]
-	_send(conn, Protocol.ROOM_STATE, {Protocol.F_ROOM: ri, Protocol.F_STATE: room.state(now_s)})
+	_send(conn, Protocol.ROOM_STATE, {Protocol.F_ROOM: ri, Protocol.F_STATE: room.state(now_s, hands)})
 	if room.phase == Protocol.PH_HUNT and room.lizard_id_of(name) != "":
 		room.reset_hunter_pos(name, now_s)
 		_send(conn, Protocol.HUNT_START, _hunt_start_fields(room, name, now_s))
@@ -344,7 +383,9 @@ func _welcome(conn: int, name: String, now_s: float, rejoin: bool) -> void:
 func _hunt_start_fields(room: GameRoom, name: String, now_s: float) -> Dictionary:
 	return {Protocol.F_ROOM: room.index, Protocol.F_ROUND: room.round_number,
 		Protocol.F_SECONDS: snappedf(room.seconds_left(now_s), 0.1), Protocol.F_BUGS: room.wire_bugs(),
-		Protocol.F_POS: Protocol.vec_to_wire(HabitatLayout.START_POS), Protocol.F_COUNT: room.count_of(name)}
+		Protocol.F_POS: Protocol.vec_to_wire(HabitatLayout.START_POS), Protocol.F_COUNT: room.count_of(name),
+		Protocol.F_MUTANT: room.is_mutant(name),
+		Protocol.F_HANDICAP: (float(room.handicap) / 100.0 if room.stage == 4 else 0.0)}
 
 
 func _on_position(conn: int, msg: Dictionary, now_s: float) -> void:
@@ -374,6 +415,30 @@ func _on_capture(conn: int, msg: Dictionary, now_s: float) -> void:
 				_send_to_student(h, Protocol.BUG_GONE, {Protocol.F_BUG_ID: id})
 	else:
 		_send(conn, Protocol.CAPTURE_REJECTED, {Protocol.F_BUG_ID: id, Protocol.F_REASON: res["reason"]})
+
+
+func _on_raise_hand(conn: int, msg: Dictionary) -> void:
+	var name: String = str(student_conns.get(conn, ""))
+	if name == "":
+		return
+	if bool(msg.get(Protocol.F_VALUE, false)):
+		hands[name] = true
+	else:
+		hands.erase(name)
+	_dirty = true
+
+
+func _on_pick_offspring(conn: int, msg: Dictionary) -> void:
+	var name: String = str(student_conns.get(conn, ""))
+	var ri: int = room_of(name)
+	if name == "" or ri < 0:
+		_error(conn, Protocol.R_CANNOT_PICK)
+		return
+	var why: String = rooms[ri].pick(name, _str(msg, Protocol.F_NAME), hands)
+	if why != "":
+		_error(conn, why)
+		return
+	_dirty = true
 
 
 func _on_release(msg: Dictionary) -> void:
@@ -413,6 +478,8 @@ func _on_start_hunt(now_s: float) -> void:
 		if room.start_hunt(now_s, connected):
 			_dirty = true
 			for h: String in room.hunter_names():
+				hands.erase(h)
+				been_lizard[h] = true
 				_send_to_student(h, Protocol.HUNT_START, _hunt_start_fields(room, h, now_s))
 
 
@@ -447,7 +514,7 @@ func _broadcast_teacher(now_s: float) -> void:
 func _broadcast_rooms(now_s: float) -> void:
 	_last_room_bc = now_s
 	for room: GameRoom in rooms:
-		var st: Dictionary = room.state(now_s)
+		var st: Dictionary = room.state(now_s, hands)
 		for m: String in room.members:
 			_send_to_student(m, Protocol.ROOM_STATE, {Protocol.F_ROOM: room.index, Protocol.F_STATE: st})
 

@@ -200,6 +200,8 @@ func _drive(cfg: Dictionary, assign: Dictionary) -> void:
 			print("bots: hunt did not finish in time")
 			break
 		await _wait(func() -> bool: return false, 0.5) # let the summaries arrive
+		if stage >= 3:
+			await _close_tagins()
 		# print and recompute each room's record
 		for r: int in range(rooms):
 			if room_done[r]:
@@ -213,12 +215,14 @@ func _drive(cfg: Dictionary, assign: Dictionary) -> void:
 			var rec: Dictionary = sm["history"].back()
 			var want: Dictionary = (expect["finish"] as Dictionary)["record"]
 			var same: bool = true
-			for key: String in ["BUGS", "bugs_next_start", "LIZARDS", "end_reason"]:
+			for key: String in ["BUGS", "bugs_next_start", "LIZARDS", "end_reason"] if stage < 3 else ["BUGS", "bugs_next_start"]:
 				if rec.get(key) != want.get(key):
 					same = false
 			print("round %d room %d: record %s" % [round_no, r, JSON.stringify(rec)])
 			print("round %d room %d: RoundRules %s -> %s" % [round_no, r, JSON.stringify(want), "match" if same else "MISMATCH"])
 			per_room_lizards[r] = (expect["finish"] as Dictionary)["next_lizards"]
+			if stage >= 3 and r < _rooms_state().size():
+				per_room_lizards[r] = RoundRules.starting_lizards((_rooms_state()[r] as Dictionary).get("hunters", [])) # picks decided the offspring
 			room_bugs[r] = int((expect["finish"] as Dictionary)["next_bugs_start"])
 			room_done[r] = bool(sm.get("ended", false))
 		var all_ended: bool = true
@@ -246,6 +250,31 @@ func _drive(cfg: Dictionary, assign: Dictionary) -> void:
 		_cmd(Protocol.ADVANCE)
 		await _wait(func() -> bool: return _all_rooms(func(r: Dictionary) -> bool:
 			return r["phase"] != Protocol.PH_STUDY), 10.0)
+		var fb_after: int = int(_env("BL_FALLBACK_AFTER", "0"))
+		if stage == 4 and fb_after > 0 and round_no == fb_after:
+			# Teacher fallback: no mutant yet, so make the first hunter in each such room one.
+			var rs: Array = _rooms_state()
+			for r: int in range(mini(rs.size(), rooms)):
+				var rd: Dictionary = rs[r]
+				var hs: Array = rd.get("hunters", [])
+				if not bool(rd.get("mutant_arisen", false)) and not hs.is_empty():
+					print("bots: ADD_MUTANT %s in room %d" % [str(hs[0]), r])
+					_cmd(Protocol.ADD_MUTANT, {Protocol.F_ROOM: r, Protocol.F_NAME: str(hs[0])})
+
+
+## Stage 3+: give the bots a moment to raise hands and pick, then ADVANCE closes every open tag-in.
+func _close_tagins() -> void:
+	var open: bool = false
+	for r: Dictionary in _rooms_state():
+		if not (r.get("tagin", []) as Array).is_empty():
+			open = true
+	if not open:
+		return
+	await _wait(func() -> bool: return false, 3.0)
+	_cmd(Protocol.ADVANCE)
+	await _wait(func() -> bool: return _all_rooms(func(r: Dictionary) -> bool:
+		return (r.get("tagin", []) as Array).is_empty() and r["phase"] != Protocol.PH_STUDY), 10.0)
+	await _wait(func() -> bool: return false, 0.5)
 
 
 func _summary_for_room(r: int, round_no: int) -> Dictionary:
@@ -254,7 +283,7 @@ func _summary_for_room(r: int, round_no: int) -> Dictionary:
 			continue
 		for s: Dictionary in b.summaries:
 			var sm: Dictionary = s.get(Protocol.F_SUMMARY, {})
-			if int(sm.get("round", 0)) == round_no:
+			if int(sm.get("round", 0)) == round_no and not bool(sm.get("tagin_open", false)):
 				return sm
 	return {}
 

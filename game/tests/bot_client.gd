@@ -7,7 +7,7 @@ extends Node
 ##
 ## opts: token (REJOIN instead of PICK_NAME), speed (default 3.0 m/s), reaction_s (hunter, default 0.6),
 ## max_captures (per hunt; -1 = unlimited, 0 = none), miss_cooldown (sweeper, default 0.0),
-## bug_id / at_msec (racer; may be set after start, between hunts).
+## bug_id / at_msec (racer; may be set after start, between hunts), no_tagin (do not raise hands or pick at Stage 3+).
 
 signal joined(token: String)
 signal hunt_started(msg: Dictionary)
@@ -48,6 +48,7 @@ var rejection_reasons: Dictionary = {}
 var responses: int = 0 # capture responses (ok or rejected) in the current hunt
 var last_response: Dictionary = {} # {ok: bool, id: int, reason: String}
 var summaries: Array[Dictionary] = []
+var last_state: Dictionary = {} # latest ROOM_STATE.state (tag-in hands, slots, can_pick)
 var errors: Array[Dictionary] = []
 var log: Array[Dictionary] = [] # every message, only when opts.record is true
 
@@ -174,6 +175,28 @@ func _on_msg(msg: Dictionary) -> void:
 		Protocol.SUMMARY:
 			summaries.append(msg)
 			summary.emit(msg)
+		Protocol.ROOM_STATE:
+			last_state = msg.get(Protocol.F_STATE, {})
+			_tagin_tick()
+
+
+## Stage 3+ tag-in: a bot that is not a parent raises its hand; a parent with an open slot picks the first name in can_pick.
+func _tagin_tick() -> void:
+	var slots: Array = last_state.get("tagin", [])
+	if slots.is_empty() or hunting or bool(opts.get("no_tagin", false)):
+		return
+	var mine_open: bool = false
+	var parent: bool = false
+	for sl: Dictionary in slots:
+		if sl["parent"] == player_name:
+			parent = true
+			if sl["student"] == "":
+				mine_open = true
+	var can: Array = last_state.get("can_pick", [])
+	if mine_open and not can.is_empty():
+		net.send(Protocol.PICK_OFFSPRING, {Protocol.F_NAME: str(can[0])})
+	elif not parent and not (last_state.get("hands", []) as Array).has(player_name):
+		net.send(Protocol.RAISE_HAND, {Protocol.F_VALUE: true})
 
 
 func _begin_hunt(msg: Dictionary) -> void:

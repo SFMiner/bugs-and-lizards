@@ -148,9 +148,11 @@ static func teacher_assign(tagin: Dictionary, slot_id: String, student: String) 
 ## offspring becomes mutant. Otherwise an offspring is mutant iff its parent is mutant.
 ## Each filled slot becomes a new lizard {id "L<round>-<k>", student, mutant, parent_id, generation parent+1}.
 ## Returns:
-##   {record: {round, stage, bugs_start, BUGS (= bugs_uncaught), bugs_next_start, LIZARDS (non-mutant
-##     survivors + non-mutant filled offspring), MUTANTS (mutant survivors + mutant filled offspring),
-##     slots_earned, slots_filled, slots_unfilled, mutant_fallback: bool, end_reason},
+##   {record: {round, stage, bugs_start, BUGS (= bugs_uncaught), bugs_next_start, LIZARDS (every survivor +
+##     every filled offspring), WILD (the non-mutants among them), MUTANTS (the mutants among them),
+##     mutant_arisen: bool (a mutant exists by the end of this round; tables and graph show WILD and MUTANTS
+##     from the first such round: owner, 2026-11-14), slots_earned, slots_filled, slots_unfilled,
+##     mutant_fallback: bool, end_reason},
 ##    next_lizards: [lizard] (survivors then new offspring), next_bugs_start: int,
 ##    ended: bool, end_reason: String, mutant_arisen: bool}
 ## Endpoints (first that applies, in this order): END_NO_BUGS (bugs_uncaught == 0), END_NO_LIZARDS
@@ -233,7 +235,8 @@ static func finish_round(hunt_result: Dictionary, tagin: Dictionary, opts: Dicti
 		end_reason = END_ROUNDS
 
 	var record: Dictionary = {"round": round_number, "stage": stage, "bugs_start": hunt_result["bugs_start"],
-		"BUGS": uncaught, "bugs_next_start": next_bugs, "LIZARDS": normal_count, "MUTANTS": mutant_count,
+		"BUGS": uncaught, "bugs_next_start": next_bugs, "LIZARDS": normal_count + mutant_count,
+		"WILD": normal_count, "MUTANTS": mutant_count, "mutant_arisen": arisen,
 		"slots_earned": slots_earned, "slots_filled": filled.size(), "slots_unfilled": slots_earned - filled.size(),
 		"mutant_fallback": fallback_used, "end_reason": end_reason}
 	return {"record": record, "next_lizards": next_lizards, "next_bugs_start": next_bugs,

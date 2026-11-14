@@ -20,6 +20,7 @@ var _seat: Dictionary = {} # {code, token, name, room}
 var _reconnect_timer: float = -1.0
 var _reconnect_delay: float = RECONNECT_S
 var _hunting: bool = false
+var _tagin_logged: bool = false
 var _histories: Dictionary = {} # room -> history (teacher graphs)
 
 
@@ -46,6 +47,7 @@ func _ready() -> void:
 		_summary = SummaryScreen.new()
 		_summary.visible = false
 		_summary.leave_requested.connect(_on_leave_game)
+		_summary.send_requested.connect(func(type: String, fields: Dictionary) -> void: _net.send(type, fields))
 		_ui.add_child(_summary)
 		_hunt = HuntView.new()
 		add_child(_hunt)
@@ -119,6 +121,7 @@ func _on_message(msg: Dictionary) -> void:
 				_on_joined(str(msg.get(Protocol.F_NAME, "")), str(msg.get(Protocol.F_TOKEN, "")), int(msg.get(Protocol.F_ROOM, 0)), code)
 		Protocol.HUNT_START:
 			print("client: hunt_start round %d bugs %d" % [int(msg.get(Protocol.F_ROUND, 0)), (msg.get(Protocol.F_BUGS, []) as Array).size()])
+			print("client: vision mutant=%s handicap=%.2f" % [str(bool(msg.get(Protocol.F_MUTANT, false))), float(msg.get(Protocol.F_HANDICAP, 0.0))])
 			_hunting = true
 			_join.visible = false
 			_summary.visible = false
@@ -140,6 +143,14 @@ func _on_message(msg: Dictionary) -> void:
 				print("client: summary round %d BUGS %d next %d LIZARDS %d" % [int(sm.get("round", 0)), int(sm.get("BUGS", 0)), int(sm.get("bugs_next_start", 0)), int(sm.get("LIZARDS", 0))])
 			if msg.has(Protocol.F_ROOM):
 				_seat["room"] = int(msg[Protocol.F_ROOM])
+			if t == Protocol.ROOM_STATE:
+				var tg_state: Dictionary = msg.get(Protocol.F_STATE, {})
+				var tg: Array = tg_state.get("tagin", [])
+				if tg.is_empty():
+					_tagin_logged = false
+				elif not _tagin_logged:
+					_tagin_logged = true
+					print("client: tagin slots %d" % tg.size())
 			_summary.handle(msg)
 			if t == Protocol.ROOM_STATE and _hunting:
 				var st: Dictionary = msg.get(Protocol.F_STATE, {})
@@ -147,6 +158,9 @@ func _on_message(msg: Dictionary) -> void:
 					_end_hunt_view()
 		Protocol.ERROR:
 			var reason: String = str(msg.get(Protocol.F_REASON, ""))
+			if reason == Protocol.R_PICK_TAKEN or reason == Protocol.R_CANNOT_PICK:
+				_summary.handle_error(reason)
+				return
 			if (reason == Protocol.R_BAD_TOKEN or reason == Protocol.R_BAD_CODE) and not _seat.is_empty():
 				_save(KEY_SEAT, {})
 				_seat = {}

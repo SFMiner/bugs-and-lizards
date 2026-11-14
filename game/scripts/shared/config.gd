@@ -11,6 +11,9 @@ const NAMES: Array[String] = ["", "Bugs & Lizards!", "Baby Bugs!", "Baby Lizards
 const STARTING_LIZARDS: Array[int] = [0, 2, 3, 3, 3]
 const STARTING_BUGS: Array[int] = [0, 50, 75, 75, 75]
 const PREDICTION_AFTER_ROUND: Array[int] = [0, 2, 2, 2, 3]
+const HANDICAP_DEFAULT: int = 60 # Stage 4 sunglasses: % of bug-to-background contrast a wild-type lizard loses
+const HANDICAP_MIN: int = 0
+const HANDICAP_MAX: int = 90
 
 
 ## A fresh config Dictionary for CONFIGURE (Protocol.F_CONFIG).
@@ -23,4 +26,5 @@ static func defaults(stage: int) -> Dictionary:
 		"lizards_start": STARTING_LIZARDS[s],
 		"hunt_seconds": HUNT_SECONDS_DEFAULT,
 		"bug_budget": BUG_BUDGET_DEFAULT,
+		"handicap": HANDICAP_DEFAULT,
 	}

@@ -22,8 +22,12 @@ Read `IMPLEMENTATION-PLAN.md` §0 first. `Bugs-and-Lizards-GDD-v0.3.md` is froze
   nginx terminates TLS and proxies `/bugs-and-lizards/ws`.
 - Client moves its own lizard and reports position ~10/s; server checks speed, range, timing, uniqueness. No line of sight.
 - Bugs static, one MultiMesh per colour, picked by arithmetic along the view ray. Habitat built in code from primitives.
+- Devices (owner, 2026-11-14): teacher on the owner's own laptop; only students use school Chromebooks (test those).
 - Teacher-typed roster; students pick a name, type nothing. Session creator holds the teacher token. No passwords/PINs/keys
   anywhere in code or .md files.
+- Hosted on sims.mr-miner.com, whose privacy page says the game writes nothing to disk and that the roster shows to anyone
+  with the code: keep `BL_CATCH_LOG` unset on the VPS and keep deploy.ps1's "catch log off, teacher key required" check.
+  Changing either needs a game-sim-server privacy-page change first.
 
 ## Contract files (manager only)
 - `scripts/shared/protocol.gd` (message and field names) and `scripts/shared/round_rules.gd` public signatures.

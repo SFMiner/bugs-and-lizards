@@ -1,7 +1,7 @@
 extends SceneTree
 ## Headless tests for RoundRules. Run with --script res://tests/rules_test.gd
 
-const EXPECTED_TOTAL: int = 308
+const EXPECTED_TOTAL: int = 314
 
 var passed: int = 0
 var failed: int = 0
@@ -160,6 +160,8 @@ func test_hunt_and_tagin() -> void:
 	eq(rec["slots_unfilled"], 1, "unfilled 1")
 	eq(rec["LIZARDS"], 4, "LIZARDS 2 survivors + 2 offspring")
 	eq(rec["MUTANTS"], 0, "MUTANTS 0")
+	eq(rec["WILD"], 4, "WILD = LIZARDS before any mutant")
+	eq(rec["mutant_arisen"], false, "no mutant yet")
 	eq(rec["BUGS"], 71, "record BUGS")
 	eq(rec["bugs_next_start"], 213, "record next")
 	eq(f["next_bugs_start"], 213, "next_bugs_start")
@@ -299,7 +301,9 @@ func test_stage4_mutant() -> void:
 	var f: Dictionary = RoundRules.finish_round(h, t, {"seed": 42})
 	eq(count_mutants(f["next_lizards"]), 1, "exactly one mutant")
 	eq(f["record"]["MUTANTS"], 1, "record MUTANTS 1")
-	eq(f["record"]["LIZARDS"], 8, "record LIZARDS 8")
+	eq(f["record"]["LIZARDS"], 9, "record LIZARDS 9 (all)")
+	eq(f["record"]["WILD"], 8, "record WILD 8")
+	eq(f["record"]["mutant_arisen"], true, "record mutant_arisen")
 	eq(f["next_lizards"].size(), 9, "9 lizards next")
 	eq(f["mutant_arisen"], true, "mutant_arisen set")
 	eq(f["record"]["mutant_fallback"], false, "no fallback flag")
@@ -371,7 +375,8 @@ func test_stage4_mutant() -> void:
 	eq(f3["next_lizards"][2]["mutant"], true, "mutant parent's child mutant")
 	eq(f3["next_lizards"][3]["mutant"], false, "normal parent's child normal")
 	eq(f3["record"]["MUTANTS"], 2, "MUTANTS counts survivor + child")
-	eq(f3["record"]["LIZARDS"], 2, "LIZARDS counts normals")
+	eq(f3["record"]["LIZARDS"], 4, "LIZARDS counts all")
+	eq(f3["record"]["WILD"], 2, "WILD counts normals")
 	# stage 4 with nobody filled: no mutant, arisen stays false
 	var setup4: Array = stage4_setup(lizs(2), [10, 10], false)
 	var f4: Dictionary = RoundRules.finish_round(setup4[0], setup4[1], {"seed": 1})
@@ -390,7 +395,8 @@ func test_fallback() -> void:
 	var f: Dictionary = RoundRules.finish_round(setup[0], setup[1], {"fallback_mutant": "L2"})
 	eq(f["record"]["mutant_fallback"], true, "fallback flagged")
 	eq(f["record"]["MUTANTS"], 1, "fallback MUTANTS")
-	eq(f["record"]["LIZARDS"], 2, "fallback LIZARDS")
+	eq(f["record"]["LIZARDS"], 3, "fallback LIZARDS all")
+	eq(f["record"]["WILD"], 2, "fallback WILD")
 	eq(f["next_lizards"][1]["mutant"], true, "fallback L2 mutant")
 	eq(f["mutant_arisen"], true, "fallback sets arisen")
 	# ignored once mutant has arisen

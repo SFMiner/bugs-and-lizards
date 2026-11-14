@@ -4,7 +4,7 @@ extends SceneTree
 ##   godot --headless --path <game> --script res://tests/graph_test.gd
 ## Prints "graph_test: PASS n/N" and exits 0 only when every check passed and the count matches TOTAL.
 
-const TOTAL: int = 21
+const TOTAL: int = 27
 
 var _passed: int = 0
 var _failed: int = 0
@@ -21,8 +21,12 @@ func _init() -> void:
 	var g4: PopulationGraph = PopulationGraph.new()
 	g4.size = Vector2(600, 360)
 	g4.set_history(_stage4_history(), 4, 75, 3)
-	_check(g4.series_names().size() == 3, "stage 4 has 3 series")
-	_check(g4.series_names()[2] == "MUTANTS", "stage 4 third series is MUTANTS")
+	_check(g4.series_names().size() == 4, "stage 4 with a mutant has 4 series")
+	_check(g4.series_names()[2] == "WILD" and g4.series_names()[3] == "MUTANTS", "stage 4 adds WILD then MUTANTS")
+	var g4n: PopulationGraph = PopulationGraph.new()
+	g4n.size = Vector2(600, 360)
+	g4n.set_history([{"round": 1, "BUGS": 40, "LIZARDS": 3, "WILD": 3, "MUTANTS": 0, "mutant_arisen": false}], 4, 75, 3)
+	_check(g4n.series_names().size() == 2, "stage 4 before any mutant has only BUGS and LIZARDS")
 
 	# Geometry, stage 2: Start is left of round 1, and rounds run left to right.
 	_check(g2.point_for("BUGS", 0).x < g2.point_for("BUGS", 1).x, "Start x is left of round 1 x")
@@ -54,7 +58,12 @@ func _init() -> void:
 
 	# Stage 4: five round columns, and MUTANTS starts at zero.
 	_check(g4.point_for("BUGS", 5).x > g4.point_for("BUGS", 4).x, "stage 4 has a fifth round column")
-	_check(g4.point_for("MUTANTS", 0).y > g4.point_for("MUTANTS", 1).y, "MUTANTS start at 0 and rise from it")
+	_check(g4.point_for("MUTANTS", 0) == Vector2(-1.0, -1.0) and g4.point_for("WILD", 0) == Vector2(-1.0, -1.0), "no WILD or MUTANTS Start point")
+	_check(g4.point_for("MUTANTS", 1) == Vector2(-1.0, -1.0) and g4.point_for("WILD", 1) == Vector2(-1.0, -1.0), "no WILD or MUTANTS point before the first mutant round")
+	_check(g4.point_for("MUTANTS", 2) != Vector2(-1.0, -1.0) and g4.point_for("WILD", 2) != Vector2(-1.0, -1.0), "WILD and MUTANTS start at the first mutant round")
+	_check(g4.point_for("LIZARDS", 1) != Vector2(-1.0, -1.0), "LIZARDS (all) has a point at round 1")
+	_check(g4.point_for("WILD", 4).y < g4.point_for("MUTANTS", 4).y, "WILD 5 is drawn above MUTANTS 3 at round 4")
+	_check(g4.fallback_rounds() == PackedInt32Array([2]) and g4n.fallback_rounds().is_empty(), "the teacher-added mutant round is marked")
 
 	# Values over 999 are plotted, not capped.
 	var gb: PopulationGraph = PopulationGraph.new()
@@ -70,6 +79,7 @@ func _init() -> void:
 
 	g2.free()
 	g4.free()
+	g4n.free()
 	ge.free()
 	gb.free()
 
@@ -99,10 +109,11 @@ func _stage2_history() -> Array:
 
 
 func _stage4_history() -> Array:
+	# Round 1: no mutant yet; round 2: the teacher added one; LIZARDS = WILD + MUTANTS.
 	return [
-		{"round": 1, "BUGS": 40, "LIZARDS": 3, "MUTANTS": 1},
-		{"round": 2, "BUGS": 60, "LIZARDS": 3, "MUTANTS": 2},
-		{"round": 3, "BUGS": 90, "LIZARDS": 2, "MUTANTS": 2},
-		{"round": 4, "BUGS": 130, "LIZARDS": 2, "MUTANTS": 3},
-		{"round": 5, "BUGS": 200, "LIZARDS": 1, "MUTANTS": 3},
+		{"round": 1, "BUGS": 40, "LIZARDS": 3, "WILD": 3, "MUTANTS": 0, "mutant_arisen": false, "mutant_fallback": false},
+		{"round": 2, "BUGS": 60, "LIZARDS": 4, "WILD": 3, "MUTANTS": 1, "mutant_arisen": true, "mutant_fallback": true},
+		{"round": 3, "BUGS": 90, "LIZARDS": 3, "WILD": 2, "MUTANTS": 1, "mutant_arisen": true, "mutant_fallback": false},
+		{"round": 4, "BUGS": 130, "LIZARDS": 5, "WILD": 3, "MUTANTS": 2, "mutant_arisen": true, "mutant_fallback": false},
+		{"round": 5, "BUGS": 200, "LIZARDS": 4, "WILD": 2, "MUTANTS": 2, "mutant_arisen": true, "mutant_fallback": false},
 	]

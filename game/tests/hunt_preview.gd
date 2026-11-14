@@ -1,6 +1,7 @@
 extends SceneTree
 ## Desktop preview of the hunt view with no server. Run windowed:
-##   BL_SHOT=<png> (save a screenshot after ~60 frames and quit), BL_PREVIEW_BUGS=<n> (default 200).
+##   BL_SHOT=<png> (save a screenshot after ~60 frames and quit), BL_PREVIEW_BUGS=<n> (default 200),
+##   BL_HANDICAP=<0..1> (sunglasses strength), BL_MUTANT=1 (hunter is a mutant).
 ## Two other lizards stand near the start. Prints the average fps over 120 frames.
 
 var _view: HuntView
@@ -35,6 +36,8 @@ func _start() -> void:
 		Protocol.F_BUGS: bugs,
 		Protocol.F_POS: Protocol.vec_to_wire(HabitatLayout.START_POS),
 		Protocol.F_COUNT: 0,
+		Protocol.F_MUTANT: OS.get_environment("BL_MUTANT") == "1",
+		Protocol.F_HANDICAP: float(OS.get_environment("BL_HANDICAP")) if OS.get_environment("BL_HANDICAP") != "" else 0.0,
 	})
 	# Two other hunters in view (LIZARDS_SEEN), so the lizard model can be checked.
 	var sp: Vector3 = HabitatLayout.START_POS

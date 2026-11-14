@@ -2,12 +2,14 @@ class_name PopulationGraph
 extends Control
 ## Paper-organizer population chart (GDD v0.3 section 4). One point per round plus a Start point.
 ## BUGS = bugs after the hunt, before bug births. LIZARDS = lizards after starvation and births.
-## MUTANTS = Stage 4 mutant lizards after births. Each series has its own dash pattern, marker shape
+## LIZARDS is always every lizard. Stage 4 adds WILD (non-mutants) and MUTANTS lines from the first record
+## with mutant_arisen (no points before it); a record with mutant_fallback gets a "T" mark (teacher added one). Each series has its own dash pattern, marker shape
 ## and text label, so colour is never the only cue. Drawn with _draw() only: no textures, no emoji.
 
 const KEY_BUGS: String = "BUGS"
 const KEY_LIZARDS: String = "LIZARDS"
 const KEY_MUTANTS: String = "MUTANTS"
+const KEY_WILD: String = "WILD"
 
 const DASH_SOLID: int = 0
 const DASH_DASHED: int = 1
@@ -24,7 +26,9 @@ const COL_GRID: Color = Color(0.8, 0.82, 0.78, 1)
 const COL_BUGS: Color = Color(0.1, 0.45, 0.2, 1)
 const COL_LIZARDS: Color = Color(0.45, 0.25, 0.08, 1)
 const COL_MUTANTS: Color = Color(0.45, 0.2, 0.6, 1)
+const COL_WILD: Color = Color(0.0, 0.4, 0.55, 1)
 
+const FALLBACK_NOTE: String = "T = teacher added a mutant"
 const FONT_PX: int = 16
 const LINE_W: float = 3.0
 const MARKER_R: float = 6.0
@@ -37,7 +41,8 @@ const LEGEND_GAP: float = 8.0
 const LEGEND_ITEM_GAP: float = 18.0
 
 var _names: PackedStringArray = PackedStringArray([KEY_BUGS, KEY_LIZARDS])
-var _values: Dictionary = {}
+var _values: Dictionary = {} # key -> PackedFloat64Array, NaN = no point
+var _fallback_idx: PackedInt32Array = PackedInt32Array() # record indexes (1 = round 1) where the teacher added a mutant
 var _axis_rounds: int = 4
 var _y_top: float = 10.0
 var _y_step: float = 2.0
@@ -53,28 +58,42 @@ func _init() -> void:
 ## MUTANTS starts at 0, because Stage 4 starts with no mutants (RoundRules).
 func set_history(history: Array, stage: int, start_bugs: int, start_lizards: int) -> void:
 	var st: int = clampi(stage, 1, 4)
+	var arisen_at: int = -1 # index (1 = round 1) of the first record with mutant_arisen
+	var idx: int = 0
+	for raw0: Variant in history:
+		if typeof(raw0) != TYPE_DICTIONARY:
+			continue
+		idx += 1
+		if st == 4 and arisen_at < 0 and bool((raw0 as Dictionary).get("mutant_arisen", false)):
+			arisen_at = idx
 	_names = PackedStringArray([KEY_BUGS, KEY_LIZARDS])
-	if st == 4:
+	if arisen_at > 0:
+		_names.append(KEY_WILD)
 		_names.append(KEY_MUTANTS)
-	var starts: Dictionary = {KEY_BUGS: float(start_bugs), KEY_LIZARDS: float(start_lizards), KEY_MUTANTS: 0.0}
+	var starts: Dictionary = {KEY_BUGS: float(start_bugs), KEY_LIZARDS: float(start_lizards), KEY_WILD: NAN, KEY_MUTANTS: NAN}
 	var built: Dictionary = {}
 	for key: String in _names:
 		built[key] = PackedFloat64Array([float(starts[key])])
+	_fallback_idx = PackedInt32Array()
 	var rounds: int = 0
 	for raw: Variant in history:
 		if typeof(raw) != TYPE_DICTIONARY:
 			continue
 		var r: Dictionary = raw
 		rounds += 1
+		if bool(r.get("mutant_fallback", false)):
+			_fallback_idx.append(rounds)
 		for key: String in _names:
 			var vals: PackedFloat64Array = built[key]
-			vals.append(float(r.get(key, 0)))
+			var has: bool = (key != KEY_WILD and key != KEY_MUTANTS) or rounds >= arisen_at
+			vals.append(float(r.get(key, 0)) if has else NAN)
 			built[key] = vals
 	var peak: float = 0.0
 	for key: String in _names:
 		var series: PackedFloat64Array = built[key]
 		for v: float in series:
-			peak = maxf(peak, v)
+			if not is_nan(v):
+				peak = maxf(peak, v)
 	_values = built
 	_axis_rounds = maxi(5 if st == 4 else 4, rounds)
 	var scale: Vector2 = _nice_scale(peak)
@@ -89,13 +108,18 @@ func point_for(series: String, index: int) -> Vector2:
 	if not _values.has(series):
 		return Vector2(-1.0, -1.0)
 	var vals: PackedFloat64Array = _values[series]
-	if index < 0 or index >= vals.size():
+	if index < 0 or index >= vals.size() or is_nan(vals[index]):
 		return Vector2(-1.0, -1.0)
 	var rect: Rect2 = _plot_rect()
 	return Vector2(_x_for(index, rect), _y_for(vals[index], rect))
 
 
-## Test hook: series keys in drawing order (stage 4 adds MUTANTS).
+## Test hook: record indexes (1 = round 1) marked "T" (teacher added a mutant).
+func fallback_rounds() -> PackedInt32Array:
+	return _fallback_idx.duplicate()
+
+
+## Test hook: series keys in drawing order (stage 4 adds WILD and MUTANTS once a mutant exists).
 func series_names() -> PackedStringArray:
 	return _names.duplicate()
 
@@ -119,8 +143,12 @@ func _legend_layout(width: float) -> Dictionary:
 	var positions: Array = []
 	var x: float = 0.0
 	var row: int = 0
-	for key: String in _names:
-		var label: String = str(_style(key)["label"])
+	var labels: PackedStringArray = PackedStringArray()
+	for key0: String in _names:
+		labels.append(str(_style(key0)["label"]))
+	if not _fallback_idx.is_empty():
+		labels.append(FALLBACK_NOTE)
+	for label: String in labels:
 		var text_w: float = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_PX).x
 		var item_w: float = LEGEND_SAMPLE_W + LEGEND_GAP + text_w + LEGEND_ITEM_GAP
 		if x > 0.0 and x + item_w > width:
@@ -128,7 +156,7 @@ func _legend_layout(width: float) -> Dictionary:
 			row += 1
 		positions.append(Vector2(x, float(row)))
 		x += item_w
-	var rows: int = row + 1 if not _names.is_empty() else 0
+	var rows: int = row + 1 if not labels.is_empty() else 0
 	return {"pos": positions, "rows": rows}
 
 
@@ -154,7 +182,9 @@ func _y_for(value: float, rect: Rect2) -> float:
 
 func _style(key: String) -> Dictionary:
 	if key == KEY_LIZARDS:
-		return {"label": "Lizards (after births)", "color": COL_LIZARDS, "dash": DASH_DASHED, "marker": MARK_SQUARE}
+		return {"label": "Lizards, all (after births)" if _names.has(KEY_WILD) else "Lizards (after births)", "color": COL_LIZARDS, "dash": DASH_DASHED, "marker": MARK_SQUARE}
+	if key == KEY_WILD:
+		return {"label": "Wild type", "color": COL_WILD, "dash": DASH_DASHED, "marker": MARK_CIRCLE}
 	if key == KEY_MUTANTS:
 		return {"label": "Mutant lizards", "color": COL_MUTANTS, "dash": DASH_DOTTED, "marker": MARK_TRIANGLE}
 	return {"label": "Bugs (after the hunt)", "color": COL_BUGS, "dash": DASH_SOLID, "marker": MARK_CIRCLE}
@@ -216,19 +246,33 @@ func _draw_legend(font: Font) -> void:
 		_draw_segment(Vector2(x, y), Vector2(x + LEGEND_SAMPLE_W, y), col, int(st["dash"]))
 		_draw_marker(Vector2(x + LEGEND_SAMPLE_W * 0.5, y), int(st["marker"]), col)
 		draw_string(font, Vector2(x + LEGEND_SAMPLE_W + LEGEND_GAP, y + 6.0), str(st["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_PX, COL_INK)
+	if not _fallback_idx.is_empty():
+		var q: Vector2 = positions[_names.size()]
+		var qx: float = PAD + q.x
+		var qy: float = PAD + q.y * LEGEND_ROW_H + LEGEND_ROW_H * 0.5
+		draw_string(font, Vector2(qx + LEGEND_SAMPLE_W * 0.5 - 5.0, qy + 6.0), "T", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_PX, COL_MUTANTS)
+		draw_string(font, Vector2(qx + LEGEND_SAMPLE_W + LEGEND_GAP, qy + 6.0), FALLBACK_NOTE.substr(4), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_PX, COL_INK)
 
 
 func _draw_series(key: String, rect: Rect2) -> void:
 	var vals: PackedFloat64Array = _values.get(key, PackedFloat64Array())
 	var st: Dictionary = _style(key)
 	var col: Color = st["color"]
-	var pts: PackedVector2Array = PackedVector2Array()
+	var pts: Array = [] # Vector2, or null where there is no point
 	for i: int in range(vals.size()):
-		pts.append(Vector2(_x_for(i, rect), _y_for(vals[i], rect)))
+		pts.append(null if is_nan(vals[i]) else Vector2(_x_for(i, rect), _y_for(vals[i], rect)))
 	for i: int in range(pts.size() - 1):
-		_draw_segment(pts[i], pts[i + 1], col, int(st["dash"]))
-	for p: Vector2 in pts:
-		_draw_marker(p, int(st["marker"]), col)
+		if pts[i] != null and pts[i + 1] != null:
+			_draw_segment(pts[i] as Vector2, pts[i + 1] as Vector2, col, int(st["dash"]))
+	for p: Variant in pts:
+		if p != null:
+			_draw_marker(p as Vector2, int(st["marker"]), col)
+	if key == KEY_MUTANTS or (key == KEY_LIZARDS and not _names.has(KEY_MUTANTS)):
+		var font: Font = ThemeDB.fallback_font
+		for fi: int in _fallback_idx:
+			if fi < pts.size() and pts[fi] != null:
+				var fp: Vector2 = pts[fi] as Vector2
+				draw_string(font, Vector2(fp.x - 5.0, fp.y - MARKER_R - 6.0), "T", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_PX, COL_MUTANTS)
 
 
 func _draw_segment(a: Vector2, b: Vector2, col: Color, dash: int) -> void:

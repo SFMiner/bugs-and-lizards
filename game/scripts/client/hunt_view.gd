@@ -1,7 +1,7 @@
 class_name HuntView
 extends Node3D
 ## The 3D hunt: habitat, bugs, own lizard, HUD. The manager (main.gd) routes server messages in through
-## begin_hunt / on_bug_gone / on_capture_ok / on_capture_rejected / end_hunt. Nothing is shown between hunts.
+## begin_hunt / on_bug_gone / on_lizards_seen / on_capture_ok / on_capture_rejected / end_hunt. Nothing is shown between hunts.
 
 const HUD_FONT: int = 20
 const HINT_TEXT: String = "W/S or Up/Down: walk   A/D: sidestep   Q/E or Left/Right: turn   R/F: look up/down   Space: catch the bug under the crosshair   Click: mouse look (Esc frees it)"
@@ -20,6 +20,7 @@ var _hunting: bool = false
 var _seconds_left: float = 0.0
 var _pos_timer: float = 0.0
 var _pending: Dictionary = {} # bug ids with a CAPTURE in flight
+var _others: Dictionary = {} # other hunter name -> LizardAvatar
 var _flash_tween: Tween
 
 
@@ -59,6 +60,7 @@ func end_hunt() -> void:
 		_player.set_active(false)
 	if _bugs != null:
 		_bugs.set_bugs([])
+	_clear_others()
 	_show_all(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
@@ -73,6 +75,40 @@ func on_bug_gone(id: int) -> void:
 	if _bugs != null:
 		_bugs.remove_bug(id)
 	_pending.erase(id)
+
+
+## The other hunters in this room: move (or add) each one named, remove any not named.
+func on_lizards_seen(list: Variant) -> void:
+	if not _hunting or typeof(list) != TYPE_ARRAY:
+		return
+	var seen: Dictionary = {}
+	for e: Variant in list:
+		if typeof(e) != TYPE_ARRAY or (e as Array).size() < 5:
+			continue
+		var a: Array = e
+		var n: String = str(a[0])
+		var p: Vector3 = Protocol.wire_to_vec([a[1], a[2], a[3]])
+		if p == Vector3.INF or not LizardAvatar.is_num(a[4]):
+			continue
+		seen[n] = true
+		var av: LizardAvatar = _others.get(n)
+		if av == null:
+			av = LizardAvatar.new()
+			add_child(av)
+			_others[n] = av
+			av.snap_to(p, float(a[4]))
+		else:
+			av.set_target(p, float(a[4]))
+	for n: String in _others.keys():
+		if not seen.has(n):
+			(_others[n] as Node).queue_free()
+			_others.erase(n)
+
+
+func _clear_others() -> void:
+	for n: String in _others:
+		(_others[n] as Node).queue_free()
+	_others.clear()
 
 
 func on_capture_ok(id: int, count: int) -> void:

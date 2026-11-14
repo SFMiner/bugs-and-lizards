@@ -5,8 +5,8 @@ extends Node3D
 ## models, one MultiMesh per kind, one flat colour each). build() is idempotent.
 
 const FLOOR_THICKNESS: float = 1.0
-const DECOR_DIR: String = "res://assets/models/plants/"
-const DECOR_FILES: Array[String] = ["plant_1", "mushroom_1", "mushroom_2", "mushroom_3", "mushroom_4", "log", "rock_1", "rock_2", "rock_3"]
+const DECOR_DIR: String = "res://assets/models/"
+const DECOR_FILES: Array[String] = ["plant_1", "mushroom_1", "mushroom_2", "mushroom_3", "mushroom_4", "log", "rock_1", "rock_2", "rock_3", "plant_2", "plant_3"]
 const DECOR_COLOURS: Array[Color] = [
 	Color(0.22, 0.52, 0.20, 1), # plant: leaf green
 	Color(0.86, 0.82, 0.70, 1), # cream
@@ -17,6 +17,8 @@ const DECOR_COLOURS: Array[Color] = [
 	Color(0.50, 0.50, 0.47, 1), # rocks: grey
 	Color(0.47, 0.46, 0.43, 1),
 	Color(0.53, 0.51, 0.46, 1),
+	Color(0.30, 0.58, 0.24, 1), # plant_2: lighter green
+	Color(0.18, 0.44, 0.22, 1), # plant_3: dark green
 ]
 
 var _built: bool = false

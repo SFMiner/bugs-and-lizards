@@ -30,6 +30,7 @@ var end_reason: String = ""
 var last_summary: Dictionary = {}
 var hunt_pos: Dictionary = {} # student name -> last accepted Vector3
 var hunt_pos_t: Dictionary = {} # student name -> time of that report
+var hunt_yaw: Dictionary = {} # student name -> last reported yaw (radians); only drawn by other clients, never checked
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 
@@ -213,10 +214,11 @@ func _shuffle(a: Array[String]) -> void:
 func reset_hunter_pos(student: String, now_s: float) -> void:
 	hunt_pos[student] = HabitatLayout.START_POS
 	hunt_pos_t[student] = now_s
+	hunt_yaw[student] = 0.0
 
 
 ## Accepts the report if it is reachable at MAX_SPEED with 50% slack plus 0.5 m; else keeps the old position.
-func submit_position(student: String, p: Vector3, now_s: float) -> bool:
+func submit_position(student: String, p: Vector3, now_s: float, yaw: float = 0.0) -> bool:
 	if phase != Protocol.PH_HUNT or not hunt_pos.has(student):
 		return false
 	if not (is_finite(p.x) and is_finite(p.y) and is_finite(p.z)):
@@ -227,7 +229,19 @@ func submit_position(student: String, p: Vector3, now_s: float) -> bool:
 		return false
 	hunt_pos[student] = p
 	hunt_pos_t[student] = now_s
+	hunt_yaw[student] = wrapf(yaw, -PI, PI) if is_finite(yaw) else 0.0
 	return true
+
+
+## LIZARDS_SEEN payload for one hunter: every other hunter's last accepted position, [name, x, y, z, yaw].
+func lizards_wire(except: String) -> Array:
+	var out: Array = []
+	for s: String in hunter_names():
+		if s == except or not hunt_pos.has(s):
+			continue
+		var p: Array = Protocol.vec_to_wire(hunt_pos[s])
+		out.append([s, p[0], p[1], p[2], snappedf(float(hunt_yaw.get(s, 0.0)), 0.01)])
+	return out
 
 
 ## Returns {ok: bool, reason: String, count: int}. First valid capture of a bug wins.

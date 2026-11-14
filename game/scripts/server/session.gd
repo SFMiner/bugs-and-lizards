@@ -29,6 +29,7 @@ var out: Array = []
 var _dirty: bool = false
 var _last_teacher_bc: float = -100.0
 var _last_room_bc: float = -100.0
+var _last_lizard_bc: float = -100.0
 
 
 func _init(p_code: String, names: Variant, now_s: float) -> void:
@@ -163,6 +164,12 @@ func tick(now_s: float) -> void:
 			_broadcast_teacher(now_s)
 		if now_s - _last_room_bc >= ROOM_BC_S:
 			_broadcast_rooms(now_s)
+		if now_s - _last_lizard_bc >= 1.0 / Protocol.LIZARDS_HZ:
+			_last_lizard_bc = now_s
+			for room: GameRoom in rooms:
+				if room.phase == Protocol.PH_HUNT:
+					for h: String in room.hunter_names():
+						_send_to_student(h, Protocol.LIZARDS_SEEN, {Protocol.F_LIZARDS: room.lizards_wire(h)})
 	_flush(now_s)
 
 
@@ -348,7 +355,8 @@ func _on_position(conn: int, msg: Dictionary, now_s: float) -> void:
 	var p: Vector3 = Protocol.wire_to_vec(msg.get(Protocol.F_POS))
 	if p == Vector3.INF:
 		return
-	rooms[ri].submit_position(name, p, now_s)
+	var yaw: Variant = msg.get(Protocol.F_YAW, 0.0)
+	rooms[ri].submit_position(name, p, now_s, float(yaw) if _is_num(yaw) else 0.0)
 
 
 func _on_capture(conn: int, msg: Dictionary, now_s: float) -> void:

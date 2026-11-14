@@ -2,7 +2,7 @@ extends SceneTree
 ## Drives GameSession / GameRoom directly (no sockets, no real waiting). Run:
 ## Godot --headless --path <game> --script res://tests/server_smoke_test.gd
 
-const EXPECTED_TOTAL: int = 69
+const EXPECTED_TOTAL: int = 72
 const LOG_DIR: String = "user://bl_test_logs"
 
 var _pass: int = 0
@@ -91,6 +91,24 @@ func _scenario_stage2() -> void:
 	_check(room.hunt_pos["Ann"] == HabitatLayout.START_POS, "teleport rejected")
 	s.handle(11, _msg("pos", {"p": [0.3, 0, 10.0], "yaw": 0}), 10.2)
 	_check(room.hunt_pos["Ann"] != HabitatLayout.START_POS, "reachable position accepted")
+	# LIZARDS_SEEN: each hunter gets the other hunters (with yaw), never itself; non-hunters get nothing
+	s.take_out()
+	s.handle(11, _msg("pos", {"p": [0.3, 0, 9.9], "yaw": 1.5}), 10.25)
+	s.tick(10.3)
+	var ls: Array = s.take_out()
+	var seen_ann: Array = _of(ls, "lizards_seen", 11)
+	var seen_bo: Array = _of(ls, "lizards_seen", 12)
+	var names_ann: Array = []
+	for e: Array in (seen_ann[0]["lizards"] if seen_ann.size() == 1 else []):
+		names_ann.append(e[0])
+	names_ann.sort()
+	_check(names_ann == ["Bo", "Cy"], "LIZARDS_SEEN lists the other hunters only")
+	var ann_in_bo: Array = []
+	for e: Array in (seen_bo[0]["lizards"] if seen_bo.size() == 1 else []):
+		if e[0] == "Ann":
+			ann_in_bo = e
+	_check(ann_in_bo.size() == 5 and is_equal_approx(float(ann_in_bo[3]), 9.9) and is_equal_approx(float(ann_in_bo[4]), 1.5), "LIZARDS_SEEN carries position and yaw")
+	_check(_of(ls, "lizards_seen", 14).is_empty(), "no LIZARDS_SEEN to a non-hunter")
 	# Ann 6, Bo 5, Cy 2: stand on each bug (positions set directly; movement checks tested above)
 	var plan: Dictionary = {"Ann": 6, "Bo": 5, "Cy": 2}
 	var conn_of: Dictionary = {"Ann": 11, "Bo": 12, "Cy": 13}

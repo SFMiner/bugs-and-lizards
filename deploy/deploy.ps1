@@ -2,7 +2,7 @@
 #   /srv/bugs-and-lizards (www/, logs/, godot), user bugsliz, /etc/systemd/system/bugs-and-lizards.service.
 # It never touches nginx: the nginx snippet + include line is a shared-layer change done separately, after
 # MainCircleAgent agrees (see deploy/nginx-location.conf).
-# Needs the root key loaded in the ssh-agent (supervised window: `ssh-add -t 4h`).
+# Needs the root key loaded in the Windows ssh-agent (supervised window: plain `ssh-add`; the agent refuses -t; end with `ssh-add -D`).
 #   pwsh deploy/deploy.ps1 -Setup     first time: user, folders, Linux Godot binary, unit
 #   pwsh deploy/deploy.ps1            export the web build, upload it, restart the server
 param(
@@ -44,7 +44,8 @@ if (-not $NoExport) {
 
 $web = Join-Path $Game "build\web"
 ssh $Vps "rm -rf /srv/bugs-and-lizards/www.new && mkdir -p /srv/bugs-and-lizards/www.new"
-scp -q (Join-Path $web "*") "${Vps}:/srv/bugs-and-lizards/www.new/"
+$files = Get-ChildItem $web -File | Where-Object Name -ne "keytest.html" | ForEach-Object FullName # keytest.html is a local debug page
+scp -q @files "${Vps}:/srv/bugs-and-lizards/www.new/"
 # Pre-compressed wasm/pck/js so nginx need not gzip 40 MB per student (gzip_static is optional; gzip on works too).
 ssh $Vps "cd /srv/bugs-and-lizards && chmod -R a+rX www.new && rm -rf www.old && mv www www.old && mv www.new www && systemctl restart bugs-and-lizards.service && sleep 2 && systemctl is-active bugs-and-lizards.service && journalctl -u bugs-and-lizards.service -n 5 --no-pager"
 Write-Host "deployed"

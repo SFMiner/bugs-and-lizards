@@ -13,20 +13,20 @@ const BUG_RADIUS: float = 0.07
 const SPAWN_SPACING: float = 0.55
 const SEED: int = 20261109
 
-## Decor: the owner's models, drawn by the client. Kinds: 0 plant, 1-4 mushrooms, 5 log, 6-8 rocks. Plants and
+## Decor: the owner's models, drawn by the client. Kinds: 0, 9, 10 plants, 1-4 mushrooms, 5 log, 6-8 rocks. Plants and
 ## mushrooms are walk-through cover: bugs may sit under leaves and caps, only the stem is kept clear. Logs and rocks
 ## are solid: bugs stay off their whole footprint. Mix by weight (owner, 2026-11-11): 75 plant : 30 fungi : 10 rock : 1 log,
 ## each group split evenly over its models. Every item is 1x-DECOR_MAX_SCALE its base size (owner: the base size is the smallest).
 const DECOR_COUNT: int = 200
-const DECOR_GROUPS: Array = [[5], [6, 7, 8], [1, 2, 3, 4], [0]] # placed big first: logs, rocks, fungi, plants
+const DECOR_GROUPS: Array = [[5], [6, 7, 8], [1, 2, 3, 4], [0, 9, 10]] # placed big first: logs, rocks, fungi, plants
 const DECOR_WEIGHTS: Array[int] = [1, 10, 30, 75] # same order as DECOR_GROUPS
-const DECOR_MAX_SCALE: Array[float] = [3.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0] # plants up to 3x (owner)
-const DECOR_SOLID: Array[bool] = [false, false, false, false, false, true, true, true, true]
-const DECOR_LENGTH: Array[float] = [0.7, 0.3, 0.3, 0.3, 0.3, 1.5, 0.6, 0.6, 0.6] # longest side at scale 1, metres
+const DECOR_MAX_SCALE: Array[float] = [3.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0] # plants up to 3x (owner)
+const DECOR_SOLID: Array[bool] = [false, false, false, false, false, true, true, true, true, false, false]
+const DECOR_LENGTH: Array[float] = [0.7, 0.3, 0.3, 0.3, 0.3, 1.5, 0.6, 0.6, 0.6, 0.7, 0.7] # longest side at scale 1, metres
 ## Measured from the models with the longest side = 1: full = farthest point from the centre (spacing),
 ## stem = farthest point in the bottom 10% of the height (kept clear of bugs on walk-through kinds).
-const DECOR_FULL: Array[float] = [0.392, 0.459, 0.553, 0.326, 0.355, 0.507, 0.698, 0.545, 0.403]
-const DECOR_STEM: Array[float] = [0.071, 0.242, 0.118, 0.098, 0.179, 0.507, 0.698, 0.545, 0.403]
+const DECOR_FULL: Array[float] = [0.489, 0.459, 0.553, 0.326, 0.355, 0.507, 0.698, 0.545, 0.403, 0.500, 0.538]
+const DECOR_STEM: Array[float] = [0.149, 0.242, 0.118, 0.098, 0.179, 0.507, 0.698, 0.545, 0.403, 0.0, 0.446]
 const DECOR_CLEAR: float = 0.12 # gap kept between a decor footprint and a bug's centre
 
 ## Surface and bug colours. Bugs draw from these four equally (fixed mix, not inherited: GDD §6).
@@ -116,7 +116,7 @@ static func decor() -> Array:
 		# Size is picked before the spot, so crowding does not bias the sizes toward small.
 		var sc: float = rng.randf_range(1.0, DECOR_MAX_SCALE[kind])
 		var r: float = DECOR_FULL[kind] * DECOR_LENGTH[kind] * sc
-		for attempt: int in 200:
+		for attempt: int in 400:
 			var x: float = rng.randf_range(-HALF + 0.3 + r, HALF - 0.3 - r)
 			var z: float = rng.randf_range(-HALF + 0.3 + r, HALF - 0.3 - r)
 			var yaw: float = rng.randf_range(0.0, TAU)
@@ -132,9 +132,9 @@ static func decor() -> Array:
 			if not clash:
 				for d: Dictionary in out:
 					var dp: Vector3 = d["pos"]
-					# Leaves and caps may overlap a little (60% of their spread); solids keep their full spread.
-					var ra: float = r if DECOR_SOLID[kind] else r * 0.6
-					var rb: float = float(d["radius"]) if DECOR_SOLID[int(d["kind"])] else float(d["radius"]) * 0.6
+					# Leaves and caps may overlap (50% of their spread); solids keep their full spread.
+					var ra: float = r if DECOR_SOLID[kind] else r * 0.5
+					var rb: float = float(d["radius"]) if DECOR_SOLID[int(d["kind"])] else float(d["radius"]) * 0.5
 					if Vector2(dp.x - x, dp.z - z).length() < ra + rb + 0.1:
 						clash = true
 						break

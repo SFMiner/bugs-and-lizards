@@ -120,6 +120,8 @@ func _on_message(msg: Dictionary) -> void:
 			_hunt.begin_hunt(msg)
 		Protocol.BUG_GONE:
 			_hunt.on_bug_gone(int(msg.get(Protocol.F_BUG_ID, -1)))
+		Protocol.LIZARDS_SEEN:
+			_hunt.on_lizards_seen(msg.get(Protocol.F_LIZARDS, []))
 		Protocol.CAPTURE_OK:
 			_hunt.on_capture_ok(int(msg.get(Protocol.F_BUG_ID, -1)), int(msg.get(Protocol.F_COUNT, 0)))
 		Protocol.CAPTURE_REJECTED:

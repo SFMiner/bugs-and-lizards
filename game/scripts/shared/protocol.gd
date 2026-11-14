@@ -14,7 +14,13 @@ const MAX_SPEED: float = 6.0 # m/s; server rejects faster reported motion (with 
 const LIZARDS_HZ: float = 10.0 # LIZARDS_SEEN broadcasts per second during a hunt
 const CAPTURE_RANGE: float = 2.5 # metres from the lizard's reported position to the bug
 const MAX_SESSIONS: int = 8
-const MAX_MESSAGE_BYTES: int = 65536 # client-to-server; larger frames are dropped
+const MAX_MESSAGE_BYTES: int = 16384 # client-to-server; larger frames are dropped
+# Abuse limits (the server's own; nginx limits per address are only a backstop).
+const MAX_PEERS: int = 360 # open connections in total (8 games x 41 seats, plus margin); more are refused
+const MSG_RATE: float = 30.0 # messages per second a connection may send on average (position reports are 10)
+const MSG_BURST: float = 60.0 # ...and in one burst; a connection over the limit is closed
+const JOIN_TIMEOUT_S: float = 600.0 # a connection that has not joined any game by then is closed (the page reconnects)
+const MAX_BAD_TRIES: int = 5 # wrong codes or teacher keys on one connection before it is closed
 
 # === FIELDS ===
 const F_TYPE: String = "t"
@@ -39,10 +45,11 @@ const F_CONFIG: String = "config" # Dictionary, see CONFIGURE
 const F_ASSIGN: String = "assign" # Dictionary name -> room int
 const F_LIZARDS: String = "lizards" # Array of names
 const F_VALUE: String = "value"
+const F_TEACHER_KEY: String = "teacher_key" # CREATE_SESSION, when the server sets BL_TEACHER_KEY
 
 # === CLIENT -> SERVER ===
 const PING: String = "ping" # {time}
-const CREATE_SESSION: String = "create_session" # teacher: {names: [String]} -> SESSION_CREATED
+const CREATE_SESSION: String = "create_session" # teacher: {names: [String], teacher_key} -> SESSION_CREATED
 const TEACHER_REJOIN: String = "teacher_rejoin" # {code, token} -> TEACHER_STATE
 const LOOKUP: String = "lookup" # student: {code} -> ROSTER
 const PICK_NAME: String = "pick_name" # student: {code, name} -> JOINED or ERROR
@@ -85,6 +92,7 @@ const R_NOT_HUNTING: String = "not_hunting"
 const R_GONE: String = "gone" # bug already captured
 const R_RANGE: String = "range"
 const R_BAD_TOKEN: String = "bad_token"
+const R_BAD_TEACHER_KEY: String = "bad_teacher_key"
 
 # Room phases (state.phase)
 const PH_SETUP: String = "setup" # before round 1's hunt

@@ -2,7 +2,7 @@ extends SceneTree
 ## End-to-end protocol test: starts the server in this process and plays it with clients and bots.
 ## Run: Godot --headless --path game --script res://tests/protocol_test.gd
 
-const EXPECTED_TOTAL: int = 157
+const EXPECTED_TOTAL: int = 167
 const WATCHDOG_SECONDS: float = 175.0
 const PORTS: Array[int] = [3390, 3391, 3392, 3393, 3394, 3395, 3396, 3397, 3398]
 const SPEED: float = 5.0 # bot walking speed in this test (the server allows 9 m/s)
@@ -195,6 +195,7 @@ func _run() -> void:
 	await test_d_rooms()
 	await test_e_rejoin()
 	await test_f_bad_inputs()
+	await test_g_limits()
 	print("protocol_test: %d s" % ((Time.get_ticks_msec() - t0) / 1000))
 	if failed == 0 and passed == EXPECTED_TOTAL:
 		print("protocol_test: PASS %d/%d" % [passed, EXPECTED_TOTAL])
@@ -701,3 +702,47 @@ func test_f_bad_inputs() -> void:
 	t.cmd(Protocol.STOP_HUNT)
 	for b: BotClient in [ann, hx]:
 		b.disconnect_now()
+
+
+## Abuse limits (protocol.gd): wrong codes, message rate, teacher key, join timeout. MAX_PEERS is not tested here.
+func test_g_limits() -> void:
+	print("-- g) limits")
+	var t: Peer = await make_teacher(["Ann"])
+	var bad_code: String = "0000" if t.code != "0000" else "9999"
+	var z: Peer = Peer.new()
+	await z.open(self, url)
+	for i: int in range(Protocol.MAX_BAD_TRIES - 1):
+		z.send(Protocol.LOOKUP, {Protocol.F_CODE: bad_code})
+		var m: Dictionary = await z.wait_msg(Protocol.ERROR)
+		eq(str(m.get(Protocol.F_REASON, "?")), Protocol.R_BAD_CODE, "g: wrong code %d answered bad_code" % (i + 1))
+	z.send(Protocol.LOOKUP, {Protocol.F_CODE: bad_code})
+	await wait_until(func() -> bool: return not z.net.is_open(), 3.0)
+	ck(not z.net.is_open(), "g: the connection is closed after MAX_BAD_TRIES wrong codes")
+	# message rate: a burst far over MSG_BURST closes the connection
+	var r: Peer = Peer.new()
+	await r.open(self, url)
+	for i: int in range(int(Protocol.MSG_BURST) * 2):
+		r.send(Protocol.PING, {Protocol.F_TIME: i})
+	await wait_until(func() -> bool: return not r.net.is_open(), 3.0)
+	ck(not r.net.is_open(), "g: a flood of messages closes the connection")
+	# teacher key, when the server has one
+	server.set("_teacher_key", "test-key")
+	var k: Peer = Peer.new()
+	await k.open(self, url)
+	k.send(Protocol.CREATE_SESSION, {Protocol.F_NAMES: ["Ann"]})
+	var e: Dictionary = await k.wait_msg(Protocol.ERROR)
+	eq(str(e.get(Protocol.F_REASON, "?")), Protocol.R_BAD_TEACHER_KEY, "g: CREATE_SESSION without the key is refused")
+	k.send(Protocol.CREATE_SESSION, {Protocol.F_NAMES: ["Ann"], Protocol.F_TEACHER_KEY: "test-key"})
+	var c: Dictionary = await k.wait_msg(Protocol.SESSION_CREATED)
+	ck(not c.is_empty(), "g: CREATE_SESSION with the key works")
+	server.set("_teacher_key", "")
+	# join timeout: age every connection; only those not in a game are closed
+	var idle: Peer = Peer.new()
+	await idle.open(self, url)
+	var conns: Dictionary = server.get("_conn")
+	for id: Variant in conns:
+		conns[id]["t0"] = float(conns[id]["t0"]) - Protocol.JOIN_TIMEOUT_S - 1.0
+	await wait_until(func() -> bool: return not idle.net.is_open(), 3.0)
+	ck(not idle.net.is_open(), "g: a connection that never joined is closed after JOIN_TIMEOUT_S")
+	await frames(10)
+	ck(t.net.is_open() and k.net.is_open(), "g: teachers in a game stay connected")

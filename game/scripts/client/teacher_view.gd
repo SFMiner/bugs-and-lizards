@@ -31,6 +31,7 @@ var _status: Label = null
 var _setup_box: VBoxContainer = null
 var _session_box: VBoxContainer = null
 var _names_edit: TextEdit = null
+var _key_edit: LineEdit = null # teacher key, only needed when the server asks for one; never stored
 var _back_btn: Button = null
 var _prev_code: String = "" # game left with New game; Back returns to it
 var _prev_token: String = ""
@@ -141,6 +142,12 @@ func _build_setup(box: VBoxContainer) -> void:
 	_names_edit.custom_minimum_size = Vector2(0, 260)
 	_names_edit.gui_input.connect(_on_names_input)
 	box.add_child(_names_edit)
+	_key_edit = LineEdit.new()
+	_key_edit.secret = true
+	_key_edit.placeholder_text = "Teacher key (if this server needs one)"
+	_key_edit.custom_minimum_size = Vector2(420, 48)
+	_key_edit.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	box.add_child(_key_edit)
 	var row: HBoxContainer = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	box.add_child(row)
@@ -345,7 +352,7 @@ func _on_create() -> void:
 		_set_status("Can't reach the game server. Wait a few seconds and press Create game again; if it keeps failing, the server is down.")
 		return
 	_set_status("Creating the game...")
-	_net_send(Protocol.CREATE_SESSION, {Protocol.F_NAMES: names})
+	_net_send(Protocol.CREATE_SESSION, {Protocol.F_NAMES: names, Protocol.F_TEACHER_KEY: _key_edit.text.strip_edges()})
 
 
 func _on_session_created(msg: Dictionary) -> void:
@@ -474,6 +481,9 @@ func _on_error(msg: Dictionary) -> void:
 		_token = ""
 		_show_session(false)
 		_set_status("That saved game could not be reopened (%s). Create a new game, or check the code." % reason)
+		return
+	if reason == Protocol.R_BAD_TEACHER_KEY:
+		_set_status("That teacher key is not right. Check it and press Create game again.")
 		return
 	_set_status("Something went wrong (%s)." % reason)
 

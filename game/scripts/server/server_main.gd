@@ -10,21 +10,24 @@ var _peers: Dictionary = {} # int id -> WebSocketPeer
 var _next_id: int = 1
 var _sessions: Dictionary = {} # code -> GameSession
 var _conn_session: Dictionary = {} # conn id -> code
-var _log_dir: String = "user://logs"
+var _log_dir: String = "" # catch log (names + counts) only when BL_CATCH_LOG=1; off on the VPS
+var _teacher_key: String = "" # BL_TEACHER_KEY from the unit's environment; "" = anyone may create a game (local)
+var _conn: Dictionary = {} # conn id -> {t0, tokens, last, bad}: abuse limits (protocol.gd)
 
 
 func start(port: int) -> void:
 	Engine.max_fps = POLL_FPS
-	var env_dir: String = OS.get_environment("BL_LOG_DIR")
-	if env_dir != "":
-		_log_dir = env_dir
+	if OS.get_environment("BL_CATCH_LOG") == "1":
+		var env_dir: String = OS.get_environment("BL_LOG_DIR")
+		_log_dir = env_dir if env_dir != "" else "user://logs"
+	_teacher_key = OS.get_environment("BL_TEACHER_KEY").strip_edges()
 	var err: Error = _tcp.listen(port, "127.0.0.1")
 	if err != OK:
 		push_error("server: cannot listen on %d (%s)" % [port, error_string(err)])
 		get_tree().quit(1)
 		return
 	GameRoom.spawn_points() # warm the cache so the first session is not slow
-	print("server: listening on 127.0.0.1:%d" % port)
+	print("server: listening on 127.0.0.1:%d (catch log %s, teacher key %s)" % [port, "on" if _log_dir != "" else "off", "required" if _teacher_key != "" else "not required"])
 
 
 func _now() -> float:
@@ -32,12 +35,17 @@ func _now() -> float:
 
 
 func _process(_delta: float) -> void:
+	var now: float = _now()
 	while _tcp.is_connection_available():
 		var conn: StreamPeerTCP = _tcp.take_connection()
+		if _peers.size() >= Protocol.MAX_PEERS:
+			conn.disconnect_from_host()
+			continue
 		var ws: WebSocketPeer = WebSocketPeer.new()
 		ws.inbound_buffer_size = Protocol.MAX_MESSAGE_BYTES * 2
 		if ws.accept_stream(conn) == OK:
 			_peers[_next_id] = ws
+			_conn[_next_id] = {"t0": now, "tokens": Protocol.MSG_BURST, "last": now, "bad": 0}
 			_next_id += 1
 	var closed: Array[int] = []
 	for id: int in _peers:
@@ -47,17 +55,23 @@ func _process(_delta: float) -> void:
 		if state == WebSocketPeer.STATE_OPEN:
 			while ws.get_available_packet_count() > 0:
 				var pkt: PackedByteArray = ws.get_packet()
+				if not _spend(id, now):
+					ws.close(1008, "too many messages")
+					break
 				if not ws.was_string_packet():
 					continue
 				var msg: Dictionary = Protocol.decode(pkt.get_string_from_utf8())
 				if not msg.is_empty():
 					_on_message(id, msg)
+			if ws.get_ready_state() == WebSocketPeer.STATE_OPEN and not _conn_session.has(id) \
+					and now - float(_conn[id]["t0"]) > Protocol.JOIN_TIMEOUT_S:
+				ws.close(1000, "idle")
 		elif state == WebSocketPeer.STATE_CLOSED:
 			closed.append(id)
 	for id: int in closed:
 		_peers.erase(id)
+		_conn.erase(id)
 		_on_disconnect(id)
-	var now: float = _now()
 	var dead: Array[String] = []
 	for code: String in _sessions:
 		var s: GameSession = _sessions[code]
@@ -67,6 +81,29 @@ func _process(_delta: float) -> void:
 			dead.append(code)
 	for code: String in dead:
 		_sessions.erase(code)
+
+
+## Token bucket per connection: MSG_RATE a second, MSG_BURST at once. False = over the limit.
+func _spend(id: int, now: float) -> bool:
+	var c: Dictionary = _conn[id]
+	var tokens: float = minf(Protocol.MSG_BURST, float(c["tokens"]) + (now - float(c["last"])) * Protocol.MSG_RATE)
+	c["last"] = now
+	if tokens < 1.0:
+		c["tokens"] = tokens
+		return false
+	c["tokens"] = tokens - 1.0
+	return true
+
+
+## A wrong code or teacher key: answer it, and close the connection after MAX_BAD_TRIES (slows code sweeps).
+func _bad_try(id: int, reason: String) -> void:
+	send(id, Protocol.ERROR, {Protocol.F_REASON: reason})
+	var c: Dictionary = _conn.get(id, {})
+	if c.is_empty():
+		return
+	c["bad"] = int(c["bad"]) + 1
+	if int(c["bad"]) >= Protocol.MAX_BAD_TRIES:
+		(_peers[id] as WebSocketPeer).close(1008, "too many wrong codes")
 
 
 func send(id: int, type: String, fields: Dictionary = {}) -> void:
@@ -95,7 +132,7 @@ func _on_message(id: int, msg: Dictionary) -> void:
 				code = cv
 			var s: GameSession = _sessions.get(code)
 			if s == null:
-				send(id, Protocol.ERROR, {Protocol.F_REASON: Protocol.R_BAD_CODE})
+				_bad_try(id, Protocol.R_BAD_CODE)
 				return
 			if t != Protocol.LOOKUP:
 				_leave_other_session(id, code, now)
@@ -111,6 +148,9 @@ func _on_message(id: int, msg: Dictionary) -> void:
 
 
 func _create_session(id: int, msg: Dictionary, now: float) -> void:
+	if _teacher_key != "" and str(msg.get(Protocol.F_TEACHER_KEY, "")).strip_edges() != _teacher_key:
+		_bad_try(id, Protocol.R_BAD_TEACHER_KEY)
+		return
 	var dead: Array[String] = []
 	for code: String in _sessions:
 		if (_sessions[code] as GameSession).is_expired(now):

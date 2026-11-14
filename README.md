@@ -9,7 +9,7 @@ Design: `Bugs-and-Lizards-GDD-v0.3.md` (frozen). Build plan: `IMPLEMENTATION-PLA
 - Server (local): `Godot_v4.7.2-stable_win64_console.exe --headless --path game -- --server` (port 3311, loopback)
 - Web export: `--headless --path game --export-release "Web" build/web/index.html`, then serve `game/build/web`
 - Pages: `index.html` student, `index.html?teacher` teacher, `index.html?campus` campus check
-- Tests (headless, `--script res://tests/<name>.gd`): `rules_test` (308), `server_smoke_test` (72), `pick_test` (8), `protocol_test` (157), `graph_test` (21)
+- Tests (headless, `--script res://tests/<name>.gd`): `rules_test` (308), `server_smoke_test` (72), `pick_test` (8), `protocol_test` (167), `graph_test` (21)
 - Bots: `BL_CODE=<code> BL_BOTS=2 BL_MODE=hunter|sweeper|idle ... --script res://tests/bots.gd` (`BL_TEACHER=1` runs a whole session)
 - Browser smoke test: `$env:PW_PATH = "<game-sim-server>\node_modules\playwright"; node game/tests/web/web_check.js <url>`
 - Re-rig the lizard after editing `lizard.blend`: `& "C:\Program Files\Blender Foundation\Blender 5.3lender.exe" -b <GameAssets>d-models\lizard.blend --python toolsig_lizard.py`
@@ -38,6 +38,7 @@ Design: `Bugs-and-Lizards-GDD-v0.3.md` (frozen). Build plan: `IMPLEMENTATION-PLA
 - Apply settings changes only ecosystems still waiting to start round 1; a played one keeps its stage until Reset, and its card says so in red while the picked stage differs.
 - Decor: 200 items by weight 75 plant : 30 fungi : 10 rock : 1 log (owner), each model of a group equally, 1-2x base size (plants 1-3x), placed by a fixed seed on open floor. Bugs may sit under leaves and caps (only stems kept 12 cm clear); rocks and logs are solid (box collision from the model bounds) and bugs stay off them. leaves and caps may overlap by half their spread; 1036 spawn points left. Base sizes and colours picked by the manager.
 - Hunters see the other hunters in their ecosystem (owner, 2026-11-11): the server sends each hunter the others' last accepted positions and facing 10 times a second (LIZARDS_SEEN); no name labels, no collision between lizards.
+- Server limits for hosting on sims (game-sim-reviewer, 2026-11-14): at most 360 connections; a connection is closed after more than 60 messages at once or 30 a second on average, after 5 wrong codes or teacher keys, or when it has not joined a game within 10 minutes. Creating a game needs the teacher key when the server sets `BL_TEACHER_KEY` (kept in `/etc/bugs-and-lizards.env` on the VPS, typed by the teacher, never stored). The names-and-counts catch log is off unless `BL_CATCH_LOG=1`. Code stays 4 digits (GDD).
 - Students can leave their game from the waiting screen ("Wrong game or name?"); the seat stays taken until the teacher releases it.
 
 ## Later

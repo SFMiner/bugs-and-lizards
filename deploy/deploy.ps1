@@ -46,6 +46,6 @@ $web = Join-Path $Game "build\web"
 ssh $Vps "rm -rf /srv/bugs-and-lizards/www.new && mkdir -p /srv/bugs-and-lizards/www.new"
 $files = Get-ChildItem $web -File | Where-Object Name -ne "keytest.html" | ForEach-Object FullName # keytest.html is a local debug page
 scp -q @files "${Vps}:/srv/bugs-and-lizards/www.new/"
-# Pre-compressed wasm/pck/js so nginx need not gzip 40 MB per student (gzip_static is optional; gzip on works too).
-ssh $Vps "cd /srv/bugs-and-lizards && chmod -R a+rX www.new && rm -rf www.old && mv www www.old && mv www.new www && systemctl restart bugs-and-lizards.service && sleep 2 && systemctl is-active bugs-and-lizards.service && journalctl -u bugs-and-lizards.service -n 5 --no-pager"
+# Pre-compressed .gz beside each file, so nginx gzip_static sends them as they are and need not gzip 40 MB per student.
+ssh $Vps "cd /srv/bugs-and-lizards && gzip -k -9 -f www.new/*.wasm www.new/*.pck www.new/*.js www.new/*.html && chmod -R a+rX www.new && rm -rf www.old && mv www www.old && mv www.new www && systemctl restart bugs-and-lizards.service && sleep 2 && systemctl is-active bugs-and-lizards.service && journalctl -u bugs-and-lizards.service -n 5 --no-pager"
 Write-Host "deployed"
